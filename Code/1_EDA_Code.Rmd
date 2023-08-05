@@ -1,0 +1,1048 @@
+---
+title: 'Project 2 : Cloud Data '
+author: "Richard Fremgen (Duke ID: 1078591), Matthew Dockman (Duke ID: 0738472)"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  pdf_document: default
+---
+
+```{r setup, message=F, warning=F, echo=F}
+library(tidymodels)
+library(parsnip)
+library(tune)
+library(discrim)
+library(ggpubr)
+library(class)
+library(caret)
+library(tidyverse)
+require(magrittr)
+library(GGally)
+require(plyr)
+library(corrplot)
+library(knitr)
+library(class)
+ggplot2::theme_set(ggplot2::theme_bw())
+knitr::opts_chunk$set(fig.align = 'center')
+```
+
+
+***
+
+## 0 - Load in Data
+
+```{r, echo=FALSE}
+# Load in three image data sets and merge into one data frame 
+
+# Vector for column names
+m_names <- c("y", "x", "label", "ndai", "sd", "corr", "ra_df", "ra_cf", "ra_bf", "ra_af", "ra_an") 
+
+# M1 Data 
+m1 <- as.data.frame(read.table("image_data/imagem1.txt",
+                               col.names = m_names)) %>% 
+                      mutate(image = "M1 Image",
+                             expert_label = case_when(.$label == 1 ~ "Cloud",
+                                                      .$label == 0 ~ "Unlabeled",
+                                                      .$label == -1 ~ "Not Cloud"),
+                             label = as.factor(label))
+m1$expert_label <- as.factor(m1$expert_label)
+
+# M2 Data 
+m2 <- as.data.frame(read.table("image_data/imagem2.txt",
+                               col.names = m_names)) %>% 
+                      mutate(image = "M2 Image",
+                             expert_label = case_when(.$label == 1 ~ "Cloud",
+                                                      .$label == 0 ~ "Unlabeled",
+                                                      .$label == -1 ~ "Not Cloud"),
+                             label = as.factor(label))
+m2$expert_label <- as.factor(m2$expert_label)
+
+# M3 Data 
+m3 <- as.data.frame(read.table("image_data/imagem3.txt",
+                               col.names = m_names)) %>% 
+                      mutate(image = "M3 Image",
+                             expert_label = case_when(.$label == 1 ~ "Cloud",
+                                                      .$label == 0 ~ "Unlabeled",
+                                                      .$label == -1 ~ "Not Cloud"),
+                             label = as.factor(label))
+m3$expert_label <- as.factor(m3$expert_label)
+ 
+# Combine three image files
+m_all <- rbind(m1, m2, m3)
+
+# Create a filtered data set - remove unlabeled points
+m_filtered <- m_all %>%
+  filter(expert_label != "Unlabeled")
+
+# Are there any null values? 
+colSums(is.na(m_all)) # No
+```
+
+
+## 1 - Data Collection and Exploration 
+
+ 
+### 1B - Plot Maps using x,y coordinates with expersts labels are color of regions
+
+
+```{r, fig.height = 3, echo=FALSE}
+# M1 Data 
+m1_plot <- ggplot(data = m1, aes(x=x, y=y)) +
+  geom_point(aes(color = expert_label)) +
+  scale_color_manual(values = c("azure2", "skyblue", "grey47")) +
+  ggtitle("M1 Image") +
+  theme(plot.title = element_text(hjust = 0.5), 
+        legend.text = element_text(size = 10),
+        legend.title = element_blank())
+labs(color = "Expert Label") 
+
+# M2 Data 
+m2_plot <- ggplot(data = m2, aes(x=x, y=y)) +
+  geom_point(aes(color = expert_label)) +
+  scale_color_manual(values = c("azure2", "skyblue", "grey47")) +
+  ggtitle("M2 Image") +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.text = element_text(size = 10),
+        legend.title = element_blank()) +
+  labs(color = "Expert Label")
+
+# M3 Data 
+m3_plot <- ggplot(data = m3, aes(x=x, y=y)) +
+  geom_point(aes(color = expert_label)) +
+  scale_color_manual(values = c("azure2", "skyblue", "grey47")) +
+  ggtitle("M3 Image") +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.text = element_text(size = 10),
+        legend.title = element_blank()) +
+  labs(color = "Expert Label")
+
+# combine three plots into one
+ggarrange(m1_plot, m2_plot, m3_plot, nrow = 1, common.legend = TRUE, legend ="bottom")
+```
+
+### 1B - Pictures with unlabeled dropped
+
+```{r, eval=FALSE, echo=FALSE}
+# M1 Data 
+m1_plot <- m_filtered %>% filter(image == "M1 Image") %>%
+  ggplot(aes(x=x, y=y)) +
+  geom_point(aes(color = expert_label)) +
+  scale_color_manual(values = c("azure2", "skyblue")) +
+  ggtitle("M1 Image") +
+  theme(plot.title = element_text(hjust = 0.5), 
+        legend.text = element_text(size = 10),
+        legend.title = element_blank())
+labs(color = "Expert Label") 
+
+# M2 Data 
+m2_plot <- m_filtered %>% filter(image == "M2 Image") %>%
+  ggplot(aes(x=x, y=y)) +
+  geom_point(aes(color = expert_label)) +
+  scale_color_manual(values = c("azure2", "skyblue")) +
+  ggtitle("M2 Image") +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.text = element_text(size = 10),
+        legend.title = element_blank()) +
+  labs(color = "Expert Label")
+
+# M3 Data 
+m3_plot <- m_filtered %>% filter(image == "M3 Image") %>%
+  ggplot(aes(x=x, y=y)) +
+  geom_point(aes(color = expert_label)) +
+  scale_color_manual(values = c("azure2", "skyblue")) +
+  ggtitle("M3 Image") +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.text = element_text(size = 10),
+        legend.title = element_blank()) +
+  labs(color = "Expert Label")
+
+# combine three plots into one
+ggarrange(m1_plot, m2_plot, m3_plot, nrow = 1, common.legend = TRUE, legend ="bottom")
+
+```
+
+
+### 1B - Sumarize the data (% of pixels for the differnt classes)
+
+USE IN REPORT
+
+```{r, echo=FALSE}
+# Create a % table by image 
+tab <- table(m_all$image, m_all$expert_label) 
+tab[] <- sprintf("%.1f%%",round(prop.table(tab,margin = 1)*100, 3))
+
+# Create a % table for all images combines
+Total <- table(m_all$expert_label)
+Total[] <- sprintf("%.1f%%",round(prop.table(Total)*100, 3))
+
+# Combine two % tables into one 
+rbind(tab, Total) %>% 
+  kable(align = "c",
+        caption = "% of Pixels by Different Expert Classes")
+
+# Stop knit here
+#knitr:::knit_exit()
+```
+
+### 1B - Sumarize the data (% of pixels for the differnt classes)
+
+If you want to look at sd, corr, ndai on an image level 
+
+```{r}
+# All Data Summary Table 
+
+print1 <- m_all %>% 
+  group_by(expert_label) %>%
+  dplyr::summarise(count = n(),
+                   ndai = round(mean(ndai),3),
+                   sd = round(mean(sd),3),
+                   corr = round(mean(corr),3),
+                   ra_df = round(mean(ra_df),3),
+                   ra_cf = round(mean(ra_cf),3),
+                   ra_bf = round(mean(ra_bf),3),
+                   ra_af = round(mean(ra_af),3),
+                   ra_an = round(mean(ra_an),3))
+print1 %>%
+  kable(align = "c")
+
+
+# Stop knit here
+knitr:::knit_exit()
+
+```
+
+
+```{r, echo=FALSE, eval=FALSE}
+
+# All Data Summary Table 
+m_all %>% 
+  group_by(expert_label) %>%
+  dplyr::summarise(count = n(),
+                   percent = count / nrow(m_all),
+                   avg_ndai = mean(ndai),
+                   avg_sd = mean(sd),
+                   avg_corr = mean(corr)) 
+
+# M1 Image 
+m1 %>% 
+  group_by(expert_label) %>%
+  dplyr::summarise(count = n(),
+                   percent = count / nrow(m2),
+                   avg_ndai = mean(ndai),
+                   avg_sd = mean(sd),
+                   avg_corr = mean(corr))
+
+# M2 Image
+m2 %>% 
+  group_by(expert_label) %>%
+  dplyr::summarise(count = n(),
+                   percent = count / nrow(m2),
+                   avg_ndai = mean(ndai),
+                   avg_sd = mean(sd),
+                   avg_corr = mean(corr)) 
+
+# M3 Image 
+m3 %>% 
+  group_by(expert_label) %>%
+  dplyr::summarise(count = n(),
+                   percent = count / nrow(m3),
+                   avg_ndai = mean(ndai),
+                   avg_sd = mean(sd),
+                   avg_corr = mean(corr))
+```
+
+### 1C - Pairwise Scatterplots  
+
+NEW PLOTS
+
+```{r, echo=FALSE, eval=FALSE} 
+# knitr::knit_exit()
+
+# Specify colors
+my_cols <- c("#00AFBB", "#E7B800", "#FC4E07")  
+
+# All Images 
+m_all %>%
+  select(4:6) %>%
+  ggpairs(aes(color = m_all$expert_label),
+          title = "All Images", 
+          diag = list(continuous = wrap("densityDiag", alpha = 0.5)),
+          lower = list(continuous = wrap("points", alpha = 0.05, size=0.1)),
+          legend = 1) +
+  theme(legend.position = "bottom",
+        legend.title = element_blank(),
+        legend.text = element_text(size = 10),
+        plot.title = element_text(hjust = 0.5))
+
+# M1 Image 
+m1 %>%
+  select(4:6) %>%
+  ggpairs(aes(color = m1$expert_label),
+          title = "M1 Image", 
+          diag = list(continuous = wrap("densityDiag", alpha = 0.5)),
+          lower = list(continuous = wrap("points", alpha = 0.05, size=0.1)),
+          legend = 1) +
+  theme(legend.position = "bottom",
+        legend.title = element_blank(),
+        legend.text = element_text(size = 10),
+        plot.title = element_text(hjust = 0.5))
+
+# M2 Image 
+m2 %>%
+  select(4:6) %>%
+  ggpairs(aes(color = m2$expert_label),
+          title = "M2 Image", 
+          diag = list(continuous = wrap("densityDiag", alpha = 0.5)),
+          lower = list(continuous = wrap("points", alpha = 0.05, size=0.1)),
+          legend = 1) +
+  theme(legend.position = "bottom",
+        legend.title = element_blank(),
+        legend.text = element_text(size = 10),
+        plot.title = element_text(hjust = 0.5))
+
+# M3 Image
+m3 %>%
+  select(4:6) %>%
+  ggpairs(aes(color = m3$expert_label),
+          title = "M3 Image", 
+          diag = list(continuous = wrap("densityDiag", alpha = 0.5)),
+          lower = list(continuous = wrap("points", alpha = 0.05, size=0.1)),
+          legend = 1) +
+  theme(legend.position = "bottom",
+        legend.title = element_blank(),
+        legend.text = element_text(size = 10),
+        plot.title = element_text(hjust = 0.5))
+```
+
+### 1C - Pairwise Scatterplots with adjusting CEX value and coloring by label - (ALL Data Combnied)
+
+OLD PLOTS
+
+```{r, eval=FALSE, echo=FALSE}
+# Specify colors
+my_cols <- c("#00AFBB", "#E7B800", "#FC4E07")  
+
+# All Data Combined 
+pairs(m_all[4:6],
+      cex = 0.05,
+      col = my_cols[m_all$label],
+      main = "All Data (0.05)")
+
+pairs(m_all[4:6],
+      cex = 0.01,
+      col = my_cols[m_all$label],
+      main = "All Data (0.01)")
+
+# M1 Image 
+ pairs(m1[4:6],
+      cex = 0.05,
+      col = my_cols[m_all$label],
+      main = "M1 Image Colored (0.05)")
+
+# M2 Image 
+pairs(m2[4:6],
+      cex = 0.05,
+      col = my_cols[m_all$label],
+      main = "M2 Image  Colored (0.05)")
+
+# M3 Image 
+pairs(m3[4:6],
+      cex = 0.05,
+      col = my_cols[m_all$label],
+      main = "M3 Image Colored (0.05)")
+```
+
+### 1C - Correlation Plots - ALL DATA POINTS
+
+```{r, eval=FALSE, echo=FALSE}
+# All Data Combined
+all_cor <- cor(m_all[4:11])
+corrplot(all_cor, method = "number", type = "upper", title = "All Data", mar=c(0,0,2,0))
+corrplot(all_cor, method = "square", type = "upper", title = "All Data", mar=c(0,0,2,0))
+
+# M1 Image
+m1_cor <- cor(m1[4:11])
+corrplot(m1_cor, method = "number", type = "upper", title = "M1 Image", mar=c(0,0,2,0))
+corrplot(m1_cor, method = "square", type = "upper", title = "M1 Image", mar=c(0,0,2,0))
+
+# M2 Image Data Combined
+m2_cor <- cor(m2[4:11])
+corrplot(m2_cor, method = "number", type = "upper", title = "M2 Image", mar=c(0,0,2,0))
+corrplot(m2_cor, method = "square", type = "upper", title = "M2 Image", mar=c(0,0,2,0)) 
+
+# M3 Image Data Combined
+m3_cor <- cor(m3[4:11])
+corrplot(m3_cor , method = "number", type = "upper", title = "M3 Image", mar=c(0,0,2,0))
+corrplot(m3_cor , method = "square", type = "upper", title = "M3 Image", mar=c(0,0,2,0))
+```
+
+### 1C - Correlation Plots - UNLABELED REMOVED 
+
+These plots allow us to look at the correlation between exper_label and the features of interest
+
+```{r, echo=FALSE, eval=FALSE}
+# All Data Combined
+m_fil_cor <- m_filtered %>%
+  mutate(label = ifelse(label == -1, 0, 1))
+
+all_cor2 <- m_fil_cor %>%
+  select(4:11, label) %>%
+  cor() 
+
+corrplot(all_cor2, method = "number", type = "upper", title = "All Data", mar=c(0,0,2,0))
+corrplot(all_cor2, method = "square", type = "upper", title = "All Data", mar=c(0,0,2,0))
+
+# M1 Image
+m1_cor2 <- m_fil_cor %>%
+  filter(image == "M1 Image") %>%
+  select(4:11, label) %>%
+  cor() 
+
+corrplot(m1_cor2, method = "number", type = "upper", title = "M1 Image", mar=c(0,0,2,0))
+corrplot(m1_cor2, method = "square", type = "upper", title = "M1 Image", mar=c(0,0,2,0))
+
+# M2 Image Data Combined
+m2_cor2 <- m_fil_cor %>%
+  filter(image == "M2 Image") %>%
+  select(4:11, label) %>%
+  cor() 
+
+corrplot(m2_cor2, method = "number", type = "upper", title = "M2 Image", mar=c(0,0,2,0))
+corrplot(m2_cor2, method = "square", type = "upper", title = "M2 Image", mar=c(0,0,2,0)) 
+
+# M3 Image Data Combined
+m3_cor2 <- m_fil_cor %>%
+  filter(image == "M3 Image") %>%
+  select(4:11, label) %>%
+  cor() 
+
+corrplot(m3_cor2 , method = "number", type = "upper", title = "M3 Image", mar=c(0,0,2,0))
+corrplot(m3_cor2 , method = "square", type = "upper", title = "M3 Image", mar=c(0,0,2,0))
+```
+
+
+### 1C - Grid of Variable Distribution - ALL EXPERT LABELS 
+
+Run entire code chunk at once
+
+```{r, echo=FALSE, eval=FALSE}
+p1 <- ggplot(data = m_all, aes(x = ndai)) + geom_density(aes(fill = expert_label), alpha = 0.5)
+p2 <- ggplot(data = m_all, aes(x = sd)) + geom_density(aes(fill = expert_label), alpha = 0.5)
+p3 <- ggplot(data = m_all, aes(x = corr)) + geom_density(aes(fill = expert_label), alpha = 0.5)
+p4 <- ggplot(data = m_all, aes(x = ra_df)) + geom_density(aes(fill = expert_label), alpha = 0.5)
+p5 <- ggplot(data = m_all, aes(x = ra_cf)) + geom_density(aes(fill = expert_label), alpha = 0.5)
+p6 <- ggplot(data = m_all, aes(x = ra_bf)) + geom_density(aes(fill = expert_label), alpha = 0.5)
+p7 <- ggplot(data = m_all, aes(x = ra_af)) + geom_density(aes(fill = expert_label), alpha = 0.5)
+p8 <- ggplot(data = m_all, aes(x = ra_an)) + geom_density(aes(fill = expert_label), alpha = 0.5)
+ggarrange(p1, p2, p3, p4, p5, p6, p7, p8, nrow = 3, ncol = 3, common.legend = TRUE, legend ="bottom") %>%
+  annotate_figure(top = "Feature Density Comparison (All Expert Labels)")
+```
+
+### 1C - Grid of Variable Distribution - UNLABELED REMOVED 
+
+Run entire code chunk at once
+
+```{r, echo=FALSE}
+p1 <- ggplot(data = m_filtered, aes(x = ndai)) + geom_density(aes(fill = expert_label), alpha = 0.5)
+p2 <- ggplot(data = m_filtered, aes(x = sd)) + geom_density(aes(fill = expert_label), alpha = 0.5)
+p3 <- ggplot(data = m_filtered, aes(x = corr)) + geom_density(aes(fill = expert_label), alpha = 0.5)
+p4 <- ggplot(data = m_filtered, aes(x = ra_df)) + geom_density(aes(fill = expert_label), alpha = 0.5)
+p5 <- ggplot(data = m_filtered, aes(x = ra_cf)) + geom_density(aes(fill = expert_label), alpha = 0.5)
+p6 <- ggplot(data = m_filtered, aes(x = ra_bf)) + geom_density(aes(fill = expert_label), alpha = 0.5)
+p7 <- ggplot(data = m_filtered, aes(x = ra_af)) + geom_density(aes(fill = expert_label), alpha = 0.5)
+p8 <- ggplot(data = m_filtered, aes(x = ra_an)) + geom_density(aes(fill = expert_label), alpha = 0.5)
+ggarrange(p1, p2, p3, p4, p5, p6, p7, p8, nrow = 3, ncol = 3, common.legend = TRUE, legend ="bottom") %>%
+  annotate_figure(top = "Feature Density Comparison (Unlabled Removed)")
+```
+
+### 1C - BOXPLOT COMPARISON - ALL EXPERT LABELS 
+
+Run entire code chunk at once
+
+```{r, eval=FALSE, echo=FALSE}
+# SD, CORR< NDAI, RA_DF Boxplots
+p1 <- ggplot(data = m_all, aes(x = expert_label, y = ndai)) + geom_boxplot(alpha = 0.1)
+p2 <- ggplot(data = m_all, aes(x = expert_label, y = sd)) + geom_boxplot(alpha = 0.1)
+p3 <- ggplot(data = m_all, aes(x = expert_label, y = corr)) + geom_boxplot(alpha = 0.1)
+p4 <- ggplot(data = m_all, aes(x = expert_label, y = ra_df)) + geom_boxplot(alpha = 0.1)
+ggarrange(p1, p2, p3, p4, nrow = 2, ncol = 2) %>%
+  annotate_figure(top = "Feature Boxplot Comparison I (All Expert Labels)")
+
+# Radiance Angle Boxplots 
+p5 <- ggplot(data = m_all, aes(x = expert_label, y = ra_cf)) + geom_boxplot(alpha = 0.1)
+p6 <- ggplot(data = m_all, aes(x = expert_label, y = ra_bf)) + geom_boxplot(alpha = 0.1)
+p7 <- ggplot(data = m_all, aes(x = expert_label, y = ra_af)) + geom_boxplot(alpha = 0.1)
+p8 <- ggplot(data = m_all, aes(x = expert_label, y = ra_an)) + geom_boxplot(alpha = 0.1)
+ggarrange(p5, p6, p7, p8, nrow = 2, ncol = 2) %>%
+  annotate_figure(top = "Feature Boxplot Comparison II (All Expert Labels)")
+```
+
+### 1C - Histograms of Different Paramters
+
+```{r, echo=FALSE, eval=FALSE}
+# NDAI - All Data 
+ggplot(data = m_all, aes(x = ndai)) +
+  geom_histogram(bins = 20, color = "grey") +
+  ggtitle("All Data - NDAI") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  facet_wrap(~expert_label)
+
+# NDAI - By Image 
+ggplot(data = m_all, aes(x = ndai)) +
+  geom_histogram(bins = 20, color = "grey") +
+  ggtitle("NDAI By Image") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  facet_grid(image~expert_label) 
+
+# CORR - All Data 
+ggplot(data = m_all, aes(x = corr)) +
+  geom_histogram(bins = 20, color = "grey") +
+  ggtitle("All Data - CORR") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  facet_wrap(~expert_label)
+
+# CORR - By Image 
+ggplot(data = m_all, aes(x = corr)) +
+  geom_histogram(bins = 20, color = "grey") +
+  ggtitle("CORR By Image") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  facet_grid(image~expert_label) 
+
+# SD - All Data 
+ggplot(data = m_all, aes(x = sd)) +
+  geom_histogram(bins = 20, color = "grey") +
+  ggtitle("All Data - SD") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  facet_wrap(~expert_label)
+
+# SD - By Image 
+ggplot(data = m_all, aes(x = sd)) +
+  geom_histogram(bins = 20, color = "grey") +
+  ggtitle("SD By Image") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  facet_grid(image~expert_label)
+
+# RA_DF
+ggplot(data = m_all, aes(x = ra_df)) +
+  geom_histogram(bins = 20, color = "grey") +
+  ggtitle("RA_DF By Image") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  facet_grid(image~expert_label)
+
+# RA_CF
+ggplot(data = m_all, aes(x = ra_cf)) +
+  geom_histogram(bins = 20, color = "grey") +
+  ggtitle("RA_CF By Image") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  facet_grid(image~expert_label)
+
+# RA_BF
+ggplot(data = m_all, aes(x = ra_bf)) +
+  geom_histogram(bins = 20, color = "grey") +
+  ggtitle("RA_BF By Image") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  facet_grid(image~expert_label)
+
+# RA_AF
+ggplot(data = m_all, aes(x = ra_af)) +
+  geom_histogram(bins = 20, color = "grey") +
+  ggtitle("RA_AF By Image") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  facet_grid(image~expert_label)
+
+# RA_AN
+ggplot(data = m_all, aes(x = ra_an)) +
+  geom_histogram(bins = 20, color = "grey") +
+  ggtitle("RA_AN By Image") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  facet_grid(image~expert_label)
+```
+
+PCA on M1
+
+```{r, eval=FALSE, echo=FALSE}
+m1_pca <- m1 %>% 
+  filter(expert_label != "Unlabeled")
+m1_use <- m1_pca %>%
+  select(4:11) 
+
+
+m1_df <- as.data.frame(prcomp(m1_use, scale = TRUE)$x) %>%
+  mutate(expert_label = m1_pca$expert_label)
+
+# plot pca
+ggplot(m1_df, aes(x = PC1, y = PC2)) +
+  geom_point(aes(color = m1_df$expert_label), alpha = 0.2)
+```
+
+
+PCA on M2
+
+
+```{r, echo=FALSE, eval=FALSE}
+m3_pca <- m3 %>% 
+  filter(expert_label != "Unlabeled")
+
+m3_use <- m3_pca %>%
+  select(4:11) 
+
+m3_pca2 <- prcomp(m3_use, scale = TRUE)
+
+m3_df <- as.data.frame(m3_pca2$x) %>%
+  mutate(expert_label = m3_pca$expert_label)
+
+# plot pca
+ggplot(m3_df, aes(x = PC1, y = PC2)) +
+  geom_point(aes(color = m3_df$expert_label), alpha = 0.2)
+
+# extract loadings
+m3_pca2$rotation[,1:2]
+(m3_pca2$sdev)^2/(sum((m3_pca2$sdev)^2)) 
+
+```
+
+PCA on all data
+
+```{r,eval=FALSE, echo=FALSE}
+mall_pca <- m_all %>% 
+  filter(expert_label != "Unlabeled")
+
+mall_use <- mall_pca %>%
+  select(4:11) 
+
+mall_pca2 <- prcomp(mall_use, scale = TRUE)
+
+mall_df <- as.data.frame(mall_pca2$x) %>%
+  mutate(expert_label = mall_pca$expert_label)
+
+# plot pca
+ggplot(mall_df, aes(x = PC1, y = PC2)) +
+  geom_point(aes(color = mall_df$expert_label), alpha = 0.2)
+
+# extract loadings
+mall_pca2$rotation[,1:2]
+(mall_pca2$sdev)^2/(sum((mall_pca2$sdev)^2)) 
+```
+
+## 2 - Preparation
+
+### 2A - Splitting the entire data set 
+
+DATA SEPARATION 1 - Write a function to divide data into four equal boxes (BLOCK)
+
+```{r, echo=FALSE}
+# Function will take into an image data frame and divide the pixels into four equals boxes
+image.block <- function(df) {
+  df<- df %>%
+  dplyr::mutate(box_num_y = cut(df$y, breaks = 4, labels = c("box1", "box2", "box3", "box4")),
+         box_num_x = cut(df$x, breaks = 4, labels = c("box1", "box2", "box3", "box4")),
+         box_num = case_when(box_num_y == "box1" & box_num_x == "box1" ~ "box1",
+                             box_num_y == "box2" & box_num_x == "box1" ~ "box2",
+                             box_num_y == "box3" & box_num_x == "box1" ~ "box3",
+                             box_num_y == "box4" & box_num_x == "box1" ~ "box4",
+                             box_num_y == "box1" & box_num_x == "box2" ~ "box5",
+                             box_num_y == "box2" & box_num_x == "box2" ~ "box6",
+                             box_num_y == "box3" & box_num_x == "box2" ~ "box7",
+                             box_num_y == "box4" & box_num_x == "box2" ~ "box8",
+                             box_num_y == "box1" & box_num_x == "box3" ~ "box9",
+                             box_num_y == "box2" & box_num_x == "box3" ~ "box10",
+                             box_num_y == "box3" & box_num_x == "box3" ~ "box11",
+                             box_num_y == "box4" & box_num_x == "box3" ~ "box12",
+                             box_num_y == "box1" & box_num_x == "box4" ~ "box13",
+                             box_num_y == "box2" & box_num_x == "box4" ~ "box14",
+                             box_num_y == "box3" & box_num_x == "box4" ~ "box15",
+                             box_num_y == "box4" & box_num_x == "box4" ~ "box16"
+                             ),
+         box_num_y = NULL,
+         box_num_x = NULL)
+  return(df) 
+}
+
+# Run image.block on all three images 
+m1<- image.block(m1) 
+m2 <- image.block(m2) 
+m3 <- image.block(m3)
+
+m1 <- m1 %>%
+  mutate(block = case_when(box_num == "box3" | box_num == "box4" | box_num == "box7" | box_num == "box8" ~ 1,
+                           box_num == "box1" | box_num == "box12" | box_num == "box15" | box_num == "box16" ~ 2,
+                           box_num == "box2" | box_num == "box5" | box_num == "box9" | box_num == "box13" ~ 3,
+                           box_num == "box6" | box_num == "box10" | box_num == "box11" | box_num == "box14" ~ 4)) %>% filter(label != 0)
+
+m2 <- m2 %>%
+  mutate(block = case_when(box_num == "box1" | box_num == "box3" | box_num == "box8" | box_num == "box16" ~ 5,
+                           box_num == "box4" | box_num == "box11" | box_num == "box12" | box_num == "box14" ~ 6,
+                           box_num == "box2" | box_num == "box6" | box_num == "box7" | box_num == "box10" ~ 7,
+                           box_num == "box5" | box_num == "box9" | box_num == "box13" | box_num == "box15" ~ 8)) %>% filter(label != 0)
+
+m3 <- m3 %>%
+  mutate(block = case_when(box_num == "box1" | box_num == "box4" | box_num == "box13" | box_num == "box16" ~ 9,
+                           box_num == "box6" | box_num == "box8" | box_num == "box10" | box_num == "box12" ~ 10,
+                           box_num == "box3" | box_num == "box7" | box_num == "box11" | box_num == "box15" ~ 11,
+                           box_num == "box2" | box_num == "box5" | box_num == "box9" | box_num == "box14" ~ 12)) %>% filter(label != 0)
+
+# Combine and update the m_all data frame 
+# m_all <- rbind(m1, m2, m3)
+```
+
+
+DATA SEPARATION 2 -  Use kmeans clustering to split data - second way to split data (CLUSTER)
+
+
+```{r, echo=FALSE}
+# M1 Image 
+set.seed(127)
+m1_k <- kmeans(m1[,1:2], centers = 4)
+m1 <- m1 %>% 
+  mutate(cl_num = m1_k$cluster,
+         cluster = cl_num,
+         cl_num = NULL)
+
+# M2 Image 
+set.seed(127)
+m2_k <- kmeans(m2[,1:2], centers = 4)
+m2 <- m2 %>% 
+  mutate(cl_num = m2_k$cluster,
+         cluster = case_when(cl_num == 1 ~ 9,
+                             cl_num == 2 ~ 10,
+                             cl_num == 3 ~ 11,
+                             cl_num == 4 ~ 12),
+         cl_num = NULL)
+
+# M3 Image 
+set.seed(127)
+m3_k <- kmeans(m3[,1:2], centers = 4)
+m3 <- m3 %>% 
+  mutate(cl_num = m3_k$cluster,
+         cluster = case_when(cl_num == 1 ~ 5,
+                             cl_num == 2 ~ 6,
+                             cl_num == 3 ~ 7,
+                             cl_num == 4 ~ 8),
+         cl_num = NULL)
+
+# Combine and update the m_all data frame 
+m_all <- rbind(m1, m2, m3)
+```
+
+
+DATA SEPARATION 1  - Now separate into training, validation, and testing sets (BLOCK) 
+
+
+```{r, echo=FALSE}
+# Now Split into Three sets: Training, Testing, Validation 
+
+# Testing Set 
+set.seed(127)
+# set.seed(35)
+block_test <- sample(unique(m_all$block), size = 2)
+m_test <- m_all %>%
+  filter(block %in% block_test) 
+
+# Training/Val Set Combined 
+m_train_val <- m_all %>%
+  filter(!(block %in% block_test))
+
+# If we want to separate training and validation blocks 
+set.seed(127)
+# set.seed(35)
+block_val <- sample(unique(m_train_val$block), size = 1) 
+m_val <- m_train_val %>%
+  filter(block %in% block_val) 
+m_train <- m_train_val %>%
+  filter(!(block %in% block_val))
+```
+
+
+DATA SEPARATION 2  - Now separate into training, validation, and testing sets (CLUSTER)
+
+
+```{r, echo=FALSE}
+# Now Split into Three sets: Training, Testing, Validation 
+
+# Testing Set 
+set.seed(127)
+
+cluster_test <- sample(unique(m_all$cluster), size = 2)
+m_test2 <- m_all %>%
+  filter(cluster %in% cluster_test) 
+
+# Training/Val Set Combined 
+m_train_val2 <- m_all %>%
+  filter(!(cluster %in% cluster_test))
+
+# If we want to separate training and validation blocks 
+set.seed(127)
+cluster_val <- sample(unique(m_train_val2$cluster), size = 1) 
+m_val2 <- m_train_val2 %>%
+  filter(cluster %in% cluster_val) 
+m_train2 <- m_train_val2 %>%
+  filter(!(cluster %in% cluster_val))
+```
+
+
+Testing to ensure blocking functions worked:
+
+
+```{r, eval=FALSE, echo=FALSE}
+# Visualize data to verify 
+ggplot(data = m1, aes(x=x, y=y)) +
+  geom_point(aes(color = box_num)) +
+  ggtitle("Box Test Viz") +
+  theme(plot.title = element_text(hjust = 0.5), 
+        legend.text = element_text(size = 10),
+        legend.title = element_blank())
+
+# Equal proportions? 
+m2 %>% group_by(box_num) %>% dplyr::summarise(c = n())
+m_all %>% group_by(block) %>% dplyr::summarise(c = n()) 
+```
+
+### 2C - Trivial Classifier
+
+DATA SEPARATION 1  -  (BLOCK) 
+
+What would be the accuracy of the model if we set all observations in the test set to -1?
+
+```{r, echo=FALSE}
+tbl1 <- m_all %>% 
+  group_by(expert_label) %>%
+  dplyr::summarise(n = n(),
+                   Percent = round(n /nrow(m_all) * 100, 1)) %>%
+  mutate(Type = "All Data") 
+
+# Training Set 
+
+tbl2a <- m_train %>% 
+  mutate(Type = "Training Data") %>%
+  group_by(Type) %>%
+  filter(label == 1) %>%
+  dplyr::summarise(num = n(),
+                   Cloud = round(num / nrow(m_train) * 100, 1)) %>%
+  dplyr::select(-c("num"))
+
+tbl2b <- m_train %>% 
+  mutate(Type = "Training Data") %>%
+  group_by(Type) %>%
+  filter(label == -1) %>%
+  dplyr::summarise(num = n(),
+                   nc = round(num / nrow(m_train) * 100, 1),
+                   n = nrow(m_train)) %>%
+  dplyr::select(-c("num", "Type"))
+
+tbl_train <- cbind(tbl2a, tbl2b) %>%
+  mutate(Cloud = sprintf("%.1f%%",Cloud),
+         nc = sprintf("%.1f%%",nc),
+         "Not Cloud" = nc) %>%
+  dplyr::select(c("Type", "Cloud", "Not Cloud", "n"))
+
+# Validation Set 
+
+tbl2a <- m_val %>% 
+  mutate(Type = "Validation Data") %>%
+  group_by(Type) %>%
+  filter(label == 1) %>%
+  dplyr::summarise(num = n(),
+                   Cloud = round(num / nrow(m_val) * 100, 1)) %>%
+  dplyr::select(-c("num"))
+
+tbl2b <- m_val %>% 
+  mutate(Type = "Validation Data") %>%
+  group_by(Type) %>%
+  filter(label == -1) %>%
+  dplyr::summarise(num = n(),
+                   nc = round(num / nrow(m_val) * 100, 1),
+                   n = nrow(m_val)) %>%
+  dplyr::select(-c("num", "Type"))
+
+tbl_val <- cbind(tbl2a, tbl2b) %>%
+  mutate(Cloud = sprintf("%.1f%%",Cloud),
+         nc = sprintf("%.1f%%",nc),
+         "Not Cloud" = nc) %>%
+  dplyr::select(c("Type", "Cloud", "Not Cloud", "n"))
+
+# Testing Set 
+
+tbl2a <- m_test %>% 
+  mutate(Type = "Testing Data") %>%
+  group_by(Type) %>%
+  filter(label == 1) %>%
+  dplyr::summarise(num = n(),
+                   Cloud = round(num / nrow(m_test) * 100, 1)) %>%
+  dplyr::select(-c("num"))
+
+tbl2b <- m_test %>% 
+  mutate(Type = "Testing Data") %>%
+  group_by(Type) %>%
+  filter(label == -1) %>%
+  dplyr::summarise(num = n(),
+                   nc = round(num / nrow(m_test) * 100, 1),
+                   n = nrow(m_test)) %>%
+  dplyr::select(-c("num", "Type"))
+
+tbl_test <- cbind(tbl2a, tbl2b) %>%
+  mutate(Cloud = sprintf("%.1f%%",Cloud),
+         nc = sprintf("%.1f%%",nc),
+         "Not Cloud" = nc) %>%
+  dplyr::select(c("Type", "Cloud", "Not Cloud", "n"))
+
+# All Data
+
+tbl2a <- m_all %>% 
+  mutate(Type = "All Data") %>%
+  group_by(Type) %>%
+  filter(label == 1) %>%
+  dplyr::summarise(num = n(),
+                   Cloud = round(num / nrow(m_all) * 100, 1)) %>%
+  dplyr::select(-c("num"))
+
+tbl2b <- m_all %>% 
+  mutate(Type = "All Data") %>%
+  group_by(Type) %>%
+  filter(label == -1) %>%
+  dplyr::summarise(num = n(),
+                   nc = round(num / nrow(m_all) * 100, 1),
+                   n = nrow(m_all)) %>%
+  dplyr::select(-c("num", "Type"))
+
+tbl_all <- cbind(tbl2a, tbl2b) %>%
+  mutate(Cloud = sprintf("%.1f%%",Cloud),
+         nc = sprintf("%.1f%%",nc),
+         "Not Cloud" = nc) %>%
+  dplyr::select(c("Type", "Cloud", "Not Cloud", "n"))
+
+# Combine Tables Together
+tbl_combine <- rbind(tbl_train, tbl_val, tbl_test, tbl_all) 
+tbl_combine
+
+# Combine two % tables into one 
+tbl_combine %>%
+  kable(align = "c",
+        caption = "Block Splitting: Expert Labels by Data Sets")
+```
+
+### 2C - Trivial Classifier
+
+DATA SEPARATION 2  -  (CLUSTER) 
+
+What would be the accuracy of the model if we set all observations in the test set to -1?
+
+```{r, echo=FALSE}
+tbl1 <- m_all %>% 
+  group_by(expert_label) %>%
+  dplyr::summarise(n = n(),
+                   Percent = round(n /nrow(m_all) * 100, 1)) %>%
+  mutate(Type = "All Data") 
+
+# Training Set 
+
+tbl2a <- m_train2 %>% 
+  mutate(Type = "Training Data") %>%
+  group_by(Type) %>%
+  filter(label == 1) %>%
+  dplyr::summarise(num = n(),
+                   Cloud = round(num / nrow(m_train2) * 100, 1)) %>%
+  dplyr::select(-c("num"))
+
+tbl2b <- m_train2 %>% 
+  mutate(Type = "Training Data") %>%
+  group_by(Type) %>%
+  filter(label == -1) %>%
+  dplyr::summarise(num = n(),
+                   nc = round(num / nrow(m_train2) * 100, 1),
+                   n = nrow(m_train2)) %>%
+  dplyr::select(-c("num", "Type"))
+
+tbl_train <- cbind(tbl2a, tbl2b) %>%
+  mutate(Cloud = sprintf("%.1f%%",Cloud),
+         nc = sprintf("%.1f%%",nc),
+         "Not Cloud" = nc) %>%
+  dplyr::select(c("Type", "Cloud", "Not Cloud", "n"))
+
+# Validation Set 
+
+tbl2a <- m_val2 %>% 
+  mutate(Type = "Validation Data") %>%
+  group_by(Type) %>%
+  filter(label == 1) %>%
+  dplyr::summarise(num = n(),
+                   Cloud = round(num / nrow(m_val2) * 100, 1)) %>%
+  dplyr::select(-c("num"))
+
+tbl2b <- m_val2 %>% 
+  mutate(Type = "Validation Data") %>%
+  group_by(Type) %>%
+  filter(label == -1) %>%
+  dplyr::summarise(num = n(),
+                   nc = round(num / nrow(m_val2) * 100, 1),
+                   n = nrow(m_val2)) %>%
+  dplyr::select(-c("num", "Type"))
+
+tbl_val <- cbind(tbl2a, tbl2b) %>%
+  mutate(Cloud = sprintf("%.1f%%",Cloud),
+         nc = sprintf("%.1f%%",nc),
+         "Not Cloud" = nc) %>%
+  dplyr::select(c("Type", "Cloud", "Not Cloud", "n"))
+
+# Testing Set 
+
+tbl2a <- m_test2 %>% 
+  mutate(Type = "Testing Data") %>%
+  group_by(Type) %>%
+  filter(label == 1) %>%
+  dplyr::summarise(num = n(),
+                   Cloud = round(num / nrow(m_test2) * 100, 1)) %>%
+  dplyr::select(-c("num"))
+
+tbl2b <- m_test2 %>% 
+  mutate(Type = "Testing Data") %>%
+  group_by(Type) %>%
+  filter(label == -1) %>%
+  dplyr::summarise(num = n(),
+                   nc = round(num / nrow(m_test2) * 100, 1),
+                   n = nrow(m_test2)) %>%
+  dplyr::select(-c("num", "Type"))
+
+tbl_test <- cbind(tbl2a, tbl2b) %>%
+  mutate(Cloud = sprintf("%.1f%%",Cloud),
+         nc = sprintf("%.1f%%",nc),
+         "Not Cloud" = nc) %>%
+  dplyr::select(c("Type", "Cloud", "Not Cloud", "n"))
+
+# All Data
+
+tbl2a <- m_all %>% 
+  mutate(Type = "All Data") %>%
+  group_by(Type) %>%
+  filter(label == 1) %>%
+  dplyr::summarise(num = n(),
+                   Cloud = round(num / nrow(m_all) * 100, 1)) %>%
+  dplyr::select(-c("num"))
+
+tbl2b <- m_all %>% 
+  mutate(Type = "All Data") %>%
+  group_by(Type) %>%
+  filter(label == -1) %>%
+  dplyr::summarise(num = n(),
+                   nc = round(num / nrow(m_all) * 100, 1),
+                   n = nrow(m_all)) %>%
+  dplyr::select(-c("num", "Type"))
+
+tbl_all <- cbind(tbl2a, tbl2b) %>%
+  mutate(Cloud = sprintf("%.1f%%",Cloud),
+         nc = sprintf("%.1f%%",nc),
+         "Not Cloud" = nc) %>%
+  dplyr::select(c("Type", "Cloud", "Not Cloud", "n"))
+
+# Combine Tables Together
+tbl_combine <- rbind(tbl_train, tbl_val, tbl_test, tbl_all) 
+tbl_combine
+
+# Combine two % tables into one 
+tbl_combine %>%
+  kable(align = "c",
+        caption = "Cluster Splitting: Expert Labels by Data Sets")
+```
+
+
+
+***
+

@@ -1,0 +1,1756 @@
+---
+title: 'Project 2 : Cloud Data '
+author: "Richard Fremgen (Duke ID: 1078591), Matthew Dockman (Duke ID: 0738472)"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  pdf_document: default
+---
+
+```{r setup, message=F, warning=F, echo=F}
+library(tidymodels)
+library(parsnip)
+library(tune)
+library(discrim)
+library(class)
+library(caret)
+library(tidyverse)
+require(magrittr)
+require(plyr)
+library(class)
+ggplot2::theme_set(ggplot2::theme_bw())
+knitr::opts_chunk$set(fig.align = 'center')
+```
+
+
+***
+
+## 0 - Load in Data
+
+```{r, echo=FALSE}
+# Load in three image data sets and merge into one data frame 
+
+# Vector for column names
+m_names <- c("y", "x", "label", "ndai", "sd", "corr", "ra_df", "ra_cf", "ra_bf", "ra_af", "ra_an") 
+
+# M1 Data 
+m1 <- as.data.frame(read.table("image_data/imagem1.txt",
+                               col.names = m_names)) %>% 
+                      mutate(image = "M1 Image",
+                             expert_label = case_when(.$label == 1 ~ "Cloud",
+                                                      .$label == 0 ~ "Unlabeled",
+                                                      .$label == -1 ~ "Not Cloud"),
+                             label = as.factor(label))
+m1$expert_label <- as.factor(m1$expert_label)
+
+# M2 Data 
+m2 <- as.data.frame(read.table("image_data/imagem2.txt",
+                               col.names = m_names)) %>% 
+                      mutate(image = "M2 Image",
+                             expert_label = case_when(.$label == 1 ~ "Cloud",
+                                                      .$label == 0 ~ "Unlabeled",
+                                                      .$label == -1 ~ "Not Cloud"),
+                             label = as.factor(label))
+m2$expert_label <- as.factor(m2$expert_label)
+
+# M3 Data 
+m3 <- as.data.frame(read.table("image_data/imagem3.txt",
+                               col.names = m_names)) %>% 
+                      mutate(image = "M3 Image",
+                             expert_label = case_when(.$label == 1 ~ "Cloud",
+                                                      .$label == 0 ~ "Unlabeled",
+                                                      .$label == -1 ~ "Not Cloud"),
+                             label = as.factor(label))
+m3$expert_label <- as.factor(m3$expert_label)
+ 
+# Combine three image files
+m_all <- rbind(m1, m2, m3)
+
+# Create a filtered data set - remove unlabeled points
+m_filtered <- m_all %>%
+  filter(expert_label != "Unlabeled")
+
+# Are there any null values? 
+colSums(is.na(m_all)) # No
+```
+
+## 1 - Preparation
+
+### 1A - Splitting the entire data set 
+
+DATA SEPARATION 1 - Write a function to divide data into four equal boxes (BLOCK) 
+
+```{r}
+# Function will take into an image data frame and divide the pixels into four equals boxes
+image.block <- function(df) {
+  df<- df %>%
+  dplyr::mutate(box_num_y = cut(df$y, breaks = 4, labels = c("box1", "box2", "box3", "box4")),
+         box_num_x = cut(df$x, breaks = 4, labels = c("box1", "box2", "box3", "box4")),
+         box_num = case_when(box_num_y == "box1" & box_num_x == "box1" ~ "box1",
+                             box_num_y == "box2" & box_num_x == "box1" ~ "box2",
+                             box_num_y == "box3" & box_num_x == "box1" ~ "box3",
+                             box_num_y == "box4" & box_num_x == "box1" ~ "box4",
+                             box_num_y == "box1" & box_num_x == "box2" ~ "box5",
+                             box_num_y == "box2" & box_num_x == "box2" ~ "box6",
+                             box_num_y == "box3" & box_num_x == "box2" ~ "box7",
+                             box_num_y == "box4" & box_num_x == "box2" ~ "box8",
+                             box_num_y == "box1" & box_num_x == "box3" ~ "box9",
+                             box_num_y == "box2" & box_num_x == "box3" ~ "box10",
+                             box_num_y == "box3" & box_num_x == "box3" ~ "box11",
+                             box_num_y == "box4" & box_num_x == "box3" ~ "box12",
+                             box_num_y == "box1" & box_num_x == "box4" ~ "box13",
+                             box_num_y == "box2" & box_num_x == "box4" ~ "box14",
+                             box_num_y == "box3" & box_num_x == "box4" ~ "box15",
+                             box_num_y == "box4" & box_num_x == "box4" ~ "box16"
+                             ),
+         box_num_y = NULL,
+         box_num_x = NULL)
+  return(df) 
+}
+
+# Run image.block on all three images 
+m1<- image.block(m1) 
+m2 <- image.block(m2) 
+m3 <- image.block(m3)
+
+m1 <- m1 %>%
+  mutate(block = case_when(box_num == "box3" | box_num == "box4" | box_num == "box7" | box_num == "box8" ~ 1,
+                           box_num == "box1" | box_num == "box12" | box_num == "box15" | box_num == "box16" ~ 2,
+                           box_num == "box2" | box_num == "box5" | box_num == "box9" | box_num == "box13" ~ 3,
+                           box_num == "box6" | box_num == "box10" | box_num == "box11" | box_num == "box14" ~ 4)) %>% filter(label != 0)
+
+m2 <- m2 %>%
+  mutate(block = case_when(box_num == "box1" | box_num == "box3" | box_num == "box8" | box_num == "box16" ~ 5,
+                           box_num == "box4" | box_num == "box11" | box_num == "box12" | box_num == "box14" ~ 6,
+                           box_num == "box2" | box_num == "box6" | box_num == "box7" | box_num == "box10" ~ 7,
+                           box_num == "box5" | box_num == "box9" | box_num == "box13" | box_num == "box15" ~ 8)) %>% filter(label != 0)
+
+m3 <- m3 %>%
+  mutate(block = case_when(box_num == "box1" | box_num == "box4" | box_num == "box13" | box_num == "box16" ~ 9,
+                           box_num == "box6" | box_num == "box8" | box_num == "box10" | box_num == "box12" ~ 10,
+                           box_num == "box3" | box_num == "box7" | box_num == "box11" | box_num == "box15" ~ 11,
+                           box_num == "box2" | box_num == "box5" | box_num == "box9" | box_num == "box14" ~ 12)) %>% filter(label != 0)
+
+# Combine and update the m_all data frame 
+m_all <- rbind(m1, m2, m3)
+```
+
+
+DATA SEPARATION 2 -  Use kmeans clustering to split data - second way to split data (CLUSTER)
+
+```{r}
+# M1 Image 
+set.seed(127)
+m1_k <- kmeans(m1[,1:2], centers = 4)
+m1 <- m1 %>% 
+  mutate(cl_num = m1_k$cluster,
+         cluster = cl_num,
+         cl_num = NULL)
+
+# M2 Image 
+set.seed(127)
+m2_k <- kmeans(m2[,1:2], centers = 4)
+m2 <- m2 %>% 
+  mutate(cl_num = m2_k$cluster,
+         cluster = case_when(cl_num == 1 ~ 9,
+                             cl_num == 2 ~ 10,
+                             cl_num == 3 ~ 11,
+                             cl_num == 4 ~ 12),
+         cl_num = NULL)
+
+# M3 Image 
+set.seed(127)
+m3_k <- kmeans(m3[,1:2], centers = 4)
+m3 <- m3 %>% 
+  mutate(cl_num = m3_k$cluster,
+         cluster = case_when(cl_num == 1 ~ 5,
+                             cl_num == 2 ~ 6,
+                             cl_num == 3 ~ 7,
+                             cl_num == 4 ~ 8),
+         cl_num = NULL)
+
+# Combine and update the m_all data frame 
+m_all <- rbind(m1, m2, m3)
+```
+
+
+## 2 - Data Splitting 
+
+### 2A - BLOCK
+
+DATA SEPARATION 1  - Now separate into training, validation, and testing sets (BLOCK) 
+
+
+```{r}
+# Now Split into Three sets: Training, Testing, Validation 
+
+# Testing Set 
+# set.seed(127) 
+set.seed(45)
+block_test <- sample(unique(m_all$block), size = 2)
+m_test <- m_all %>%
+  filter(block %in% block_test) 
+
+# Training/Val Set Combined 
+m_train_val <- m_all %>%
+  filter(!(block %in% block_test))
+
+# If we want to separate training and validation blocks 
+set.seed(127)
+block_val <- sample(unique(m_train_val$block), size = 1) 
+m_val <- m_train_val %>%
+  filter(block %in% block_val) 
+m_train <- m_train_val %>%
+  filter(!(block %in% block_val))
+```
+
+
+### 2B - CLUSTER
+
+DATA SEPARATION 2  - Now separate into training, validation, and testing sets (CLUSTER)
+
+
+```{r}
+# Now Split into Three sets: Training, Testing, Validation 
+
+# Testing Set 
+set.seed(127)
+
+cluster_test <- sample(unique(m_all$cluster), size = 2)
+m_test2 <- m_all %>%
+  filter(cluster %in% cluster_test) 
+
+# Training/Val Set Combined 
+m_train_val2 <- m_all %>%
+  filter(!(cluster %in% cluster_test))
+
+# If we want to separate training and validation blocks 
+set.seed(127)
+cluster_val <- sample(unique(m_train_val2$cluster), size = 1) 
+m_val2 <- m_train_val2 %>%
+  filter(cluster %in% cluster_val) 
+m_train2 <- m_train_val2 %>%
+  filter(!(cluster %in% cluster_val))
+```
+
+
+### 2C - Generic Cross Validation Function
+
+
+```{r}
+# fold_type = how you want to split folds (by cluster or blocks)
+# classifier = type of classifier
+# X_train = training features
+# y_train = training labels
+# k = number of folds
+# loss = loss function 
+# m_recipe = equation for model
+
+CVmaster <- function(fold_type, classifier, train_data, k, m_recipe) {
+  
+  # First specify the fold type 
+  if (fold_type == "cluster") { 
+    folds <- group_vfold_cv(train_data, group = "cluster", v = k)
+  } else {
+    folds <- group_vfold_cv(train_data, group = "block", v = k)
+  }
+  
+  # Remove block or cluster variable
+   if (fold_type == "cluster") { 
+    train_data <- train_data %>% dplyr::select(-c("cluster"))
+  } else {
+    train_data <- train_data %>% dplyr::select(-c("block"))
+  }
+  
+
+  # Run model workflow
+  mod_workflow <- workflow() %>%
+    add_recipe(m_recipe) %>%
+    add_model(classifier) 
+  
+  mod_fit <- mod_workflow %>%
+    fit_resamples(folds) 
+  
+  mod_val <- mod_fit %>%
+    collect_metrics(summarize = FALSE) %>%
+   filter(.metric == "accuracy")
+  
+  return(mod_val)
+}
+```
+
+
+## 3 - Modeling : Fit Logistic Regression, QDA, KNN and Random Forests 
+
+1A - Logistic Regression - (BLOCK)
+
+
+```{r}
+# Filter data frame to only contain predictors and response
+# Convert not cloud to zero 
+m_log <- m_train_val %>%
+  dplyr::select(c(3:11, "block")) %>%
+  mutate(label = as.factor(ifelse(label == -1, 0, 1))) 
+
+class_test <- logistic_reg() %>%
+  set_engine("glm")
+
+recip_test <- recipe(label ~ ., data = m_log)
+
+#### Use CVMaster function below to obtain K-fold CV loss on the training sets
+
+# Run function and view results 
+set.seed(127)
+log_block <- CVmaster(fold_type = "block", class_test, m_log, 10, recip_test)
+log_block
+mean(log_block$.estimate) 
+
+
+#### Now run model on the test data and construct an ROC curve
+
+# Modify Test set to only include the response and the predictor variables 
+test_df <- m_test %>%
+  mutate(label = as.factor(ifelse(label == -1, 0, 1))) %>%
+  dplyr::select(c(3:11, "block"))
+
+# Now use our logistic model from CV to evaluate performance on the test set
+log_wflow <- workflow() %>%
+  add_recipe(recip_test) %>%
+  add_model(class_test)  
+  
+log_fit <- log_wflow %>%
+  fit(data = m_log) 
+
+# Obtain the test error
+log_test_acc <- augment(log_fit, test_df) %>% accuracy(label, .pred_class) %>%
+  dplyr::select(3) %>% round(digits = 3) 
+
+log_test_kap <- augment(log_fit, test_df) %>% kap(label, .pred_class) %>%
+  dplyr::select(3) %>% round(digits = 3) 
+
+# Obtain the area under the curve
+
+log_test_area <- augment(log_fit, test_df) %>% roc_auc(truth = label,
+            .pred_0) %>%
+  dplyr::select(3) %>% round(digits = 3) 
+
+# ROC Curve - via autoplot
+log_test_block_roc <- augment(log_fit, test_df) %>% 
+  roc_curve(truth = label,
+            .pred_0) %>% 
+  autoplot() 
+
+# Extract sensitivity and specificity 
+log_block_extract <- augment(log_fit, test_df) %>% 
+  roc_curve(truth = label,
+            .pred_0) %>%
+  mutate(method = "Logistic Regression")
+
+
+# Extract Accuracy for fold and reformat into a tidy table 
+avg_log_block <- log_block %>% group_by(.metric) %>% dplyr::summarise(avg = round(mean(.estimate),3))
+log_block2 <- log_block %>% pivot_wider(id_cols = id, names_from = id, values_from = .estimate) %>% round(digits = 3) %>% mutate(Method = "Logistic Regression", "CV Type" = "Block")
+log_block2 <- cbind(log_block2, avg_log_block[,2], log_test_acc)
+colnames(log_block2) <- c("Fold 1", "Fold 2", "Fold 3", "Fold 4" , "Fold 5", " Fold 6", "Fold 7", "Fold 8", "Fold 9" , "Fold 10", "Method", "CV Type", "Fold Avg.", "Test Accuracy") 
+
+# Final Table
+log_block2 <- log_block2 %>% dplyr::select(c(11:12, 14, 13, 1:10))
+```
+
+
+1B - Logistic Regression - (CLUSTER)
+
+
+```{r}
+# Filter data frame to only contain predictors and response
+# Convert not cloud to zero 
+m_log <- m_train_val2 %>%
+  dplyr::select(c(3:11, "cluster")) %>%
+  mutate(label = as.factor(ifelse(label == -1, 0, 1))) 
+
+class_test <- logistic_reg() %>%
+  set_engine("glm")
+
+recip_test <- recipe(label ~ ., data = m_log)
+
+#### Use CVMaster function below to obtain K-fold CV loss on the training sets
+
+# Run function and view results 
+set.seed(127)
+log_cluster <- CVmaster(fold_type = "cluster", class_test, m_log, 10, recip_test)
+log_cluster
+mean(log_cluster$.estimate)
+
+
+#### Now run model on the test data and construct an ROC curve
+
+# Modify Test set to only include the response and the predictor variables 
+test_df <- m_test2 %>%
+  mutate(label = as.factor(ifelse(label == -1, 0, 1))) %>%
+  dplyr::select(c(3:11, "cluster"))
+
+# Now use our logistic model from CV to evaluate performance on the test set
+log_wflow <- workflow() %>%
+  add_recipe(recip_test) %>%
+  add_model(class_test)  
+  
+log_fit <- log_wflow %>%
+  fit(data = m_log) 
+
+# Obtain the test error
+log_test_acc2 <- augment(log_fit, test_df) %>% accuracy(label, .pred_class) %>%
+  dplyr::select(3) %>% round(digits = 3)
+
+log_test_kap2 <- augment(log_fit, test_df) %>% kap(label, .pred_class) %>%
+  dplyr::select(3) %>% round(digits = 3) 
+
+
+# Obtain the area under the curve
+log_test_area2 <- augment(log_fit, test_df) %>% roc_auc(truth = label,
+            .pred_0) %>%
+  dplyr::select(3) %>% round(digits = 3) 
+
+
+# ROC Curve
+log_test_cluster_roc <- augment(log_fit, test_df) %>% 
+  roc_curve(truth = label,
+            .pred_0) %>% 
+  autoplot() 
+
+# Extract sensitivity and specificity 
+log_cluster_extract <- augment(log_fit, test_df) %>% 
+  roc_curve(truth = label,
+            .pred_0) %>%
+  mutate(method = "Logistic Regression")
+
+
+# Extract Accuracy for fold and reformat into a tidy table 
+avg_log_cluster <- log_cluster %>% group_by(.metric) %>% dplyr::summarise(avg = round(mean(.estimate),3))
+log_cluster2 <- log_cluster %>% pivot_wider(id_cols = id, names_from = id, values_from = .estimate) %>% round(digits = 3) %>% mutate(Method = "Logistic Regression", "CV Type" = "Cluster")
+log_cluster2 <- cbind(log_cluster2, avg_log_cluster[,2], log_test_acc2)
+colnames(log_cluster2) <- c("Fold 1", "Fold 2", "Fold 3", "Fold 4" , "Fold 5", " Fold 6", "Fold 7", "Fold 8", "Fold 9" , "Fold 10", "Method", "CV Type", "Fold Avg.", "Test Accuracy") 
+
+# Final Table
+log_cluster2 <- log_cluster2 %>% dplyr::select(c(11:12, 14, 13, 1:10))
+```
+
+
+2A - QDA - (BLOCK)  
+
+
+```{r}
+set.seed(127) 
+
+# Filter data frame to only contain predictors and response
+m_log <- m_train_val %>%
+  dplyr::select(c(3:11, "block")) %>%
+  mutate(label = as.factor(ifelse(label == -1, 0, 1))) 
+
+class_test <- discrim_quad() %>%
+  set_engine("MASS") %>%
+  set_mode("classification") 
+
+recip_test <- recipe(label ~ ., data = m_log)
+
+#### Use CVMaster function below to obtain K-fold CV loss on the training sets
+
+set.seed(127) 
+qda_block <- CVmaster(fold_type = "block", class_test, m_log, 10, recip_test)
+mean(qda_block$.estimate) 
+qda_block
+
+
+#### Now run model on the test data and construct an ROC curve
+
+# Modify Test set to only include the response and the predictor variables 
+test_df <- m_test %>%
+  mutate(label = as.factor(ifelse(label == -1, 0, 1))) %>%
+  dplyr::select(c(3:11, "block"))
+
+# Now use our QDA model from CV to evaluate performance on the test set
+qda_wflow <- workflow() %>%
+  add_recipe(recip_test) %>%
+  add_model(class_test)  
+  
+qda_fit <- qda_wflow %>%
+  fit(data = m_log) 
+
+# Obtain the test error
+qda_test_acc <- augment(qda_fit, test_df) %>% accuracy(label, .pred_class) %>%
+  dplyr::select(3) %>% round(digits = 3) 
+
+# Obtain the kap
+qda_test_kap <- augment(qda_fit, test_df) %>% kap(label, .pred_class) %>%
+  dplyr::select(3) %>% round(digits = 3)
+
+# Obtain the area under the curve
+qda_test_area <- augment(qda_fit, test_df) %>% roc_auc(truth = label,
+            .pred_0) %>%
+  dplyr::select(3) %>% round(digits = 3) 
+
+# ROC Curve
+qda_test_block_roc <- augment(qda_fit, test_df) %>% 
+  roc_curve(truth = label,
+            .pred_0) %>% 
+  autoplot() 
+
+
+# Extract sensitivity and specificity 
+qda_block_extract <- augment(qda_fit, test_df) %>% 
+  roc_curve(truth = label,
+            .pred_0) %>%
+  mutate(method = "QDA")
+
+
+# Extract Accuracy for fold and reformat into a tidy table 
+avg_qda_block <- qda_block %>% group_by(.metric) %>% dplyr::summarise(avg = round(mean(.estimate),3))
+qda_block2 <- qda_block %>% pivot_wider(id_cols = id, names_from = id, values_from = .estimate) %>% round(digits = 3) %>% mutate(Method = "QDA", "CV Type" = "Block")
+qda_block2 <- cbind(qda_block2, avg_qda_block[,2], qda_test_acc)
+colnames(qda_block2) <- c("Fold 1", "Fold 2", "Fold 3", "Fold 4" , "Fold 5", " Fold 6", "Fold 7", "Fold 8", "Fold 9" , "Fold 10", "Method", "CV Type", "Fold Avg.", "Test Accuracy") 
+
+# Final Table
+qda_block2 <- qda_block2 %>% dplyr::select(c(11:12, 14, 13, 1:10))
+```
+
+
+2B - QDA - (CLUSTER) 
+
+
+```{r}
+set.seed(127) 
+
+# Filter data frame to only contain predictors and response
+m_log <- m_train_val2 %>%
+  dplyr::select(c(3:11, "cluster")) %>%
+  mutate(label = as.factor(ifelse(label == -1, 0, 1))) 
+
+class_test <- discrim_quad() %>%
+  set_engine("MASS") %>%
+  set_mode("classification") 
+
+recip_test <- recipe(label ~ ., data = m_log) 
+
+#### Use CVMaster function below to obtain K-fold CV loss on the training sets
+
+set.seed(127) 
+qda_cluster <- CVmaster(fold_type = "cluster", class_test, m_log, 10, recip_test)
+mean(qda_cluster$.estimate) 
+qda_cluster 
+
+
+#### Now run model on the test data and construct an ROC curve
+
+# Modify Test set to only include the response and the predictor variables 
+test_df <- m_test2 %>%
+  mutate(label = as.factor(ifelse(label == -1, 0, 1))) %>%
+  dplyr::select(c(3:11, "cluster"))
+
+# Now use our QDA model from CV to evaluate performance on the test set
+qda_wflow <- workflow() %>%
+  add_recipe(recip_test) %>%
+  add_model(class_test)  
+  
+qda_fit <- qda_wflow %>%
+  fit(data = m_log) 
+
+# Obtain the test error
+qda_test_acc2 <- augment(qda_fit, test_df) %>% accuracy(label, .pred_class) %>%
+  dplyr::select(3) %>% round(digits = 3) 
+
+# Obtain the kap
+qda_test_kap2 <- augment(qda_fit, test_df) %>% kap(label, .pred_class) %>%
+  dplyr::select(3) %>% round(digits = 3)
+
+# Obtain the area under the curve
+qda_test_area2 <- augment(qda_fit, test_df) %>% roc_auc(truth = label,
+            .pred_0) %>%
+  dplyr::select(3) %>% round(digits = 3) 
+
+# ROC Curve
+qda_test_cluster_roc <- augment(qda_fit, test_df) %>% 
+  roc_curve(truth = label,
+            .pred_0) %>% 
+  autoplot() 
+
+
+# Extract sensitivity and specificity 
+qda_cluster_extract <- augment(qda_fit, test_df) %>% 
+  roc_curve(truth = label,
+            .pred_0) %>%
+  mutate(method = "QDA")
+
+
+# Extract Accuracy for fold and reformat into a tidy table 
+avg_qda_cluster <- qda_cluster %>% group_by(.metric) %>% dplyr::summarise(avg = round(mean(.estimate),3))
+qda_cluster2 <- qda_cluster %>% pivot_wider(id_cols = id, names_from = id, values_from = .estimate) %>% round(digits = 3) %>% mutate(Method = "QDA", "CV Type" = "Cluster")
+qda_cluster2 <- cbind(qda_cluster2, avg_qda_cluster[,2], qda_test_acc2)
+colnames(qda_cluster2) <- c("Fold 1", "Fold 2", "Fold 3", "Fold 4" , "Fold 5", " Fold 6", "Fold 7", "Fold 8", "Fold 9" , "Fold 10", "Method", "CV Type", "Fold Avg.", "Test Accuracy") 
+
+# Final Table
+qda_cluster2 <- qda_cluster2 %>% dplyr::select(c(11:12, 14, 13, 1:10))
+```
+
+
+```{r}
+# library(ranger)
+# 
+# # Filter data frame to only contain predictors and response
+# m_log <- m_train_val %>%
+#   dplyr::select(3:11) %>%
+#   mutate(label = as.factor(ifelse(label == -1, 0, 1))) 
+# 
+# set.seed(127) 
+# folds <- vfold_cv(m_log, v = 5) 
+# 
+# ### Model
+# 
+# rf_model = rand_forest(trees = 100) %>% 
+#   set_engine("ranger", num.threads = 15) %>% 
+#   set_mode("classification") 
+# 
+# rf_recipe = recipe(label ~ ., data = m_log) 
+# 
+# rf_workflow = workflow() %>% 
+#   add_model(rf_model) %>% 
+#   add_recipe(rf_recipe)
+# 
+# #### Fit Model on CV Sets and extract metrics for all five folds
+# rf_val <- rf_workflow %>%
+#   fit_resamples(folds)  
+# 
+# rf_val %>%
+#   collect_metrics(summarize = FALSE) %>%
+#   filter(.metric == "accuracy")
+```
+
+
+```{r}
+# # Filter data frame to only contain predictors and response
+# m_log <- m_train_val %>%
+#   dplyr::select(c(3:11, "block")) %>%
+#   mutate(label = as.factor(ifelse(label == -1, 0, 1))) 
+# 
+# class_test <- rand_forest(trees = 100) %>% 
+#   set_engine("ranger", num.threads = 15) %>% 
+#   set_mode("classification") 
+# 
+# recip_test <- recipe(label ~ ., data = m_log)
+# 
+# rf_block <- CVmaster(fold_type = "block", class_test, m_log, 10, recip_test) 
+# 
+# mean(rf_block$.estimate)
+# 
+# rf_block
+```
+
+
+```{r}
+# # Filter data frame to only contain predictors and response
+# m_log <- m_train_val2 %>%
+#   dplyr::select(c(3:11, "cluster")) %>%
+#   mutate(label = as.factor(ifelse(label == -1, 0, 1))) 
+# 
+# class_test <- rand_forest(trees = 100) %>% 
+#   set_engine("ranger", num.threads = 15) %>% 
+#   set_mode("classification") 
+# 
+# recip_test <- recipe(label ~ ., data = m_log)
+# 
+# rf_cluster <- CVmaster(fold_type = "cluster", class_test, m_log, 10, recip_test) 
+# 
+# mean(rf_cluster$.estimate)
+# 
+# rf_cluster
+```
+
+
+3A - KNN - (BLOCK) 
+
+Try K = 1 - SELECT this value!
+
+
+```{r}
+library(kknn)
+# Filter data frame to only contain predictors and response
+# Convert not cloud to zero 
+m_log <- m_train_val %>%
+  dplyr::select(c(3:11, "block")) %>%
+  mutate(label = as.factor(ifelse(label == -1, 0, 1))) 
+
+knn_test <- nearest_neighbor(neighbors = 1) %>% 
+  set_engine("kknn") %>%
+  set_mode("classification")
+
+recip_test <- recipe(label ~ ., data = m_log) %>%
+  step_scale(-label) %>%
+  prep()
+
+#### Use CVMaster function below to obtain K-fold CV loss on the training sets
+
+doParallel::registerDoParallel()
+
+# knn_output_1 <- CVmaster(fold_type = "block", knn_test, m_log, 10, recip_test)
+
+k1 <- mean(knn_output_1$.estimate) 
+
+knn_block <- knn_output_1
+
+
+
+#### Now run model on the test data and construct an ROC curve
+
+# Modify Test set to only include the response and the predictor variables 
+test_df <- m_test %>%
+  mutate(label = as.factor(ifelse(label == -1, 0, 1))) %>%
+  dplyr::select(c(3:11, "block"))
+
+# Now use our QDA model from CV to evaluate performance on the test set
+knn_wflow <- workflow() %>%
+  add_recipe(recip_test) %>%
+  add_model(class_test)  
+  
+knn_fit <- knn_wflow %>%
+  fit(data = m_log) 
+
+# Obtain the test error
+knn_test_acc <- augment(knn_fit, test_df) %>% accuracy(label, .pred_class) %>%
+  dplyr::select(3) %>% round(digits = 3) 
+
+# Obtain the test error
+knn_test_kap<- augment(knn_fit, test_df) %>% kap(label, .pred_class) %>%
+  dplyr::select(3) %>% round(digits = 3) 
+
+
+# Obtain the area under the curve
+knn_test_area <- augment(knn_fit, test_df) %>% roc_auc(truth = label,
+            .pred_0) %>%
+  dplyr::select(3) %>% round(digits = 3) 
+
+# ROC Curve
+knn_test_block_roc <- augment(knn_fit, test_df) %>% 
+  roc_curve(truth = label,
+            .pred_0) %>% 
+  autoplot() 
+
+
+# Extract sensitivity and specificity 
+knn_block_extract <- augment(knn_fit, test_df) %>% 
+  roc_curve(truth = label,
+            .pred_0) %>%
+  mutate(method = "KNN")
+
+
+# Extract Accuracy for fold and reformat into a tidy table 
+avg_knn_block <- knn_block %>% group_by(.metric) %>% dplyr::summarise(avg = round(mean(.estimate),3))
+knn_block2 <- knn_block %>% pivot_wider(id_cols = id, names_from = id, values_from = .estimate) %>% round(digits = 3) %>% mutate(Method = "KNN", "CV Type" = "Block")
+knn_block2 <- cbind(knn_block2, avg_knn_block[,2], knn_test_acc)
+colnames(knn_block2) <- c("Fold 1", "Fold 2", "Fold 3", "Fold 4" , "Fold 5", " Fold 6", "Fold 7", "Fold 8", "Fold 9" , "Fold 10", "Method", "CV Type", "Fold Avg.", "Test Accuracy") 
+
+# Final Table
+knn_block2 <- knn_block2 %>% dplyr::select(c(11:12, 14, 13, 1:10))
+```
+
+3A - KNN - (BLOCK) 
+
+Try K = 2
+
+```{r}
+library(kknn)
+# Filter data frame to only contain predictors and response
+# Convert not cloud to zero 
+m_log <- m_train_val %>%
+  dplyr::select(c(3:11, "block")) %>%
+  mutate(label = as.factor(ifelse(label == -1, 0, 1))) 
+
+knn_test <- nearest_neighbor(neighbors = 2) %>% 
+  set_engine("kknn") %>%
+  set_mode("classification")
+
+recip_test <- recipe(label ~ ., data = m_log) %>%
+  step_scale(-label) %>%
+  prep()
+
+#### Use CVMaster function below to obtain K-fold CV loss on the training sets
+
+doParallel::registerDoParallel()
+
+knn_output_2 <- CVmaster(fold_type = "block", knn_test, m_log, 10, recip_test)
+
+k2 <- mean(knn_output_2$.estimate)
+```
+
+
+3A - KNN - (BLOCK) 
+
+Try K = 3
+
+```{r}
+library(kknn)
+# Filter data frame to only contain predictors and response
+# Convert not cloud to zero 
+m_log <- m_train_val %>%
+  dplyr::select(c(3:11, "block")) %>%
+  mutate(label = as.factor(ifelse(label == -1, 0, 1))) 
+
+knn_test <- nearest_neighbor(neighbors = 3) %>% 
+  set_engine("kknn") %>%
+  set_mode("classification")
+
+recip_test <- recipe(label ~ ., data = m_log) %>%
+  step_scale(-label) %>%
+  prep()
+
+#### Use CVMaster function below to obtain K-fold CV loss on the training sets
+
+doParallel::registerDoParallel()
+
+knn_output_3 <- CVmaster(fold_type = "block", knn_test, m_log, 10, recip_test)
+
+k3 <- mean(knn_output_3$.estimate)
+```
+
+
+3B - KNN - (CLUSTER) 
+
+Use K = 1 
+
+```{r}
+library(kknn) 
+# Filter data frame to only contain predictors and response
+# Convert not cloud to zero 
+m_log <- m_train_val2 %>%
+  dplyr::select(c(3:11, "cluster")) %>%
+  mutate(label = as.factor(ifelse(label == -1, 0, 1))) 
+
+knn_test <- nearest_neighbor(neighbors = 1) %>% 
+  set_engine("kknn") %>%
+  set_mode("classification")
+
+recip_test <- recipe(label ~ ., data = m_log) %>%
+  step_scale(-label) %>%
+  prep()
+
+#### Use CVMaster function below to obtain K-fold CV loss on the training sets
+
+doParallel::registerDoParallel()
+
+# knn_output_1c <- CVmaster(fold_type = "cluster", knn_test, m_log, 10, recip_test)
+
+k1_c <- mean(knn_output_1c$.estimate)
+
+knn_cluster <- knn_output_1c
+
+
+#### Now run model on the test data and construct an ROC curve
+
+
+# Modify Test set to only include the response and the predictor variables 
+test_df <- m_test2 %>%
+  mutate(label = as.factor(ifelse(label == -1, 0, 1))) %>%
+  dplyr::select(c(3:11, "cluster"))
+
+# Now use our KNN model from CV to evaluate performance on the test set
+knn_wflow <- workflow() %>%
+  add_recipe(recip_test) %>%
+  add_model(class_test)  
+  
+knn_fit <- knn_wflow %>%
+  fit(data = m_log) 
+
+# Obtain the test error
+knn_test_acc2 <- augment(knn_fit, test_df) %>% accuracy(label, .pred_class) %>%
+  dplyr::select(3) %>% round(digits = 3) 
+
+# Obtain the test error
+knn_test_kap2 <- augment(knn_fit, test_df) %>% kap(label, .pred_class) %>%
+  dplyr::select(3) %>% round(digits = 3) 
+
+# Obtain the area under the curve
+knn_test_area2 <- augment(knn_fit, test_df) %>% roc_auc(truth = label,
+            .pred_0) %>%
+  dplyr::select(3) %>% round(digits = 3) 
+
+# ROC Curve
+knn_test_cluster_roc <- augment(knn_fit, test_df) %>% 
+  roc_curve(truth = label,
+            .pred_0) %>% 
+  autoplot() 
+
+
+# Extract sensitivity and specificity 
+knn_cluster_extract <- augment(knn_fit, test_df) %>% 
+  roc_curve(truth = label,
+            .pred_0) %>%
+  mutate(method = "KNN")
+
+
+# Extract Accuracy for fold and reformat into a tidy table 
+avg_knn_cluster <- knn_cluster %>% group_by(.metric) %>% dplyr::summarise(avg = round(mean(.estimate),3))
+knn_cluster2 <- knn_cluster %>% pivot_wider(id_cols = id, names_from = id, values_from = .estimate) %>% round(digits = 3) %>% mutate(Method = "KNN", "CV Type" = "Cluster")
+knn_cluster2 <- cbind(knn_cluster2, avg_knn_cluster[,2], knn_test_acc2)
+colnames(knn_cluster2) <- c("Fold 1", "Fold 2", "Fold 3", "Fold 4" , "Fold 5", " Fold 6", "Fold 7", "Fold 8", "Fold 9" , "Fold 10", "Method", "CV Type", "Fold Avg.", "Test Accuracy") 
+
+# Final Table
+knn_cluster2 <- knn_cluster2 %>% dplyr::select(c(11:12, 14, 13, 1:10))
+```
+
+
+3B - KNN - (CLUSTER) 
+
+Try K = 2 
+
+```{r}
+library(kknn)
+# Filter data frame to only contain predictors and response
+# Convert not cloud to zero 
+m_log <- m_train_val2 %>%
+  dplyr::select(c(3:11, "cluster")) %>%
+  mutate(label = as.factor(ifelse(label == -1, 0, 1))) 
+
+knn_test <- nearest_neighbor(neighbors = 2) %>% 
+  set_engine("kknn") %>%
+  set_mode("classification")
+
+recip_test <- recipe(label ~ ., data = m_log) %>%
+  step_scale(-label) %>%
+  prep()
+
+#### Use CVMaster function below to obtain K-fold CV loss on the training sets
+
+doParallel::registerDoParallel()
+
+knn_output_2c <- CVmaster(fold_type = "cluster", knn_test, m_log, 10, recip_test)
+
+k2_c <- mean(knn_output_2c$.estimate)
+```
+
+
+
+4A - RANDOM FORESTS - Tuning the hyper parameters 
+
+
+```{r}
+
+library(ranger)
+
+# Filter data frame to only contain predictors and response
+m_log <- m_train_val %>%
+  dplyr::select(c(3:11, "block")) %>%
+  mutate(label = as.factor(ifelse(label == -1, 0, 1))) 
+
+### Model
+
+rf_model <- rand_forest(mtry = tune(), 
+                        min_n = tune(), 
+                        trees = 30) %>% 
+  set_engine("ranger", num.threads = 4) %>% 
+  set_mode("classification")
+
+rf_recipe <- recipe(label ~ ., data = m_log) 
+
+rf_workflow <- workflow() %>% 
+  add_model(rf_model) %>% 
+  add_recipe(rf_recipe)
+
+
+# Tune the Model - Attempt I
+
+set.seed(127) 
+
+folds <- group_vfold_cv(m_log, group = "block", v = 10)
+
+doParallel::registerDoParallel()
+
+# Set up a tune grid
+
+rf_res <- rf_workflow %>% 
+  tune_grid(
+    resamples = folds,
+    grid = 15
+  )
+ 
+# Select best
+rf_res %>% select_best("roc_auc")
+rf_parm <- rf_res %>% select_best("accuracy")
+
+# What is the best model based on accuracy ?
+rf_res %>%
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  dplyr::select(mean, min_n, mtry) %>%
+  pivot_longer(min_n:mtry,
+    values_to = "value",
+    names_to = "parameter"
+  ) %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(show.legend = FALSE) +
+  facet_wrap(~parameter, scales = "free_x") +
+  labs(x = NULL, y = "Accuracy", title = "Random Forest Parameter Tuning") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+
+4A - RANDOM FORESTS - (BLOCK) 
+
+
+TREES = FOR LOOP
+
+```{r}
+
+tree_loop <- c(1, 2, 3, 4, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 70, 80, 100, 120, 140, 160, 180, 200)
+tree_loop2 <- c(250,300, 350, 400, 450, 500)
+tree_loop3 <- c(tree_loop, tree_loop2)
+mean_vector3 <- c(mean_vector, mean_vector2)
+mean_vector2 <- c()
+
+set.seed(127)
+
+for(i in seq_along(tree_loop2)) {
+
+# Filter data frame to only contain predictors and response
+m_log <- m_train_val %>%
+  dplyr::select(c(3:11, "block")) %>%
+  mutate(label = as.factor(ifelse(label == -1, 0, 1))) 
+
+doParallel::registerDoParallel() 
+
+class_test <- rand_forest(trees = i, mtry = 3, min_n = 11) %>% 
+  set_engine("ranger", num.threads = 4) %>% 
+  set_mode("classification") 
+
+recip_test <- recipe(label ~ ., data = m_log)
+
+rf_block <- CVmaster(fold_type = "block", class_test, m_log, 10, recip_test) 
+
+mean_vector2[i] <- mean(rf_block$.estimate)
+
+}
+
+mv <- mean_vector
+plot_df <- as.data.frame(cbind(mean_vector3, tree_loop3))
+plot_df %>% ggplot(aes(x = tree_loop3, y = mean_vector3)) +
+  geom_point() +
+  geom_line() +
+  ylim(c(0.6,1)) +
+  labs(x = "Number of Trees", y = "Accuracy", title = "Random Forest Convergence (Block)") +
+   theme(plot.title = element_text(hjust = 0.5))
+```
+
+4A - RANDOM FORESTS - (CLUSTER) 
+
+
+TREES = FOR LOOP
+
+```{r}
+tree_loop <- c(1, 2, 3, 4, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 100, 120, 140, 160, 180, 200, 250,300, 350, 400, 450, 500)
+
+mean_vector <- c()
+
+set.seed(127)
+
+for(i in seq_along(tree_loop)) {
+
+# Filter data frame to only contain predictors and response
+m_log <- m_train_val2 %>%
+  dplyr::select(c(3:11, "cluster")) %>%
+  mutate(label = as.factor(ifelse(label == -1, 0, 1))) 
+
+doParallel::registerDoParallel() 
+
+class_test <- rand_forest(trees = i, mtry = 3, min_n = 11) %>% 
+  set_engine("ranger", num.threads = 4) %>% 
+  set_mode("classification") 
+
+recip_test <- recipe(label ~ ., data = m_log)
+
+rf_block <- CVmaster(fold_type = "cluster", class_test, m_log, 10, recip_test) 
+
+mean_vector[i] <- mean(rf_block$.estimate)
+
+}
+
+plot_df <- as.data.frame(cbind(mean_vector, tree_loop))
+plot_df %>% ggplot(aes(x = tree_loop, y = mean_vector)) +
+  geom_point() +
+  geom_line() +
+  ylim(c(0.6,1)) +
+  labs(x = "Number of Trees", y = "Accuracy", title = "Random Forest Convergence (Cluster)") +
+   theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+4A - RANDOM FORESTS - (BLOCK) - RUN TUNED MODEL
+
+
+```{r}
+
+set.seed(127)
+
+# Filter data frame to only contain predictors and response
+m_log <- m_train_val %>%
+  dplyr::select(c(3:11, "block")) %>%
+  mutate(label = as.factor(ifelse(label == -1, 0, 1))) 
+
+doParallel::registerDoParallel() 
+
+class_test <- rand_forest(trees = 160, mtry = 3, min_n = 11) %>% 
+  set_engine("ranger", num.threads = 4) %>% 
+  set_mode("classification") 
+
+recip_test <- recipe(label ~ ., data = m_log)
+
+rf_block <- CVmaster(fold_type = "block", class_test, m_log, 10, recip_test) 
+
+mean(rf_block$.estimate)
+
+
+#### Now run model on the test data and construct an ROC curve
+
+# Modify Test set to only include the response and the predictor variables 
+test_df <- m_test %>%
+  mutate(label = as.factor(ifelse(label == -1, 0, 1))) %>%
+  dplyr::select(c(3:11, "block"))
+
+# Now use our logistic model from CV to evaluate performance on the test set
+rf_wflow <- workflow() %>%
+  add_recipe(recip_test) %>%
+  add_model(class_test)  
+  
+rf_fit <- rf_wflow %>%
+  fit(data = m_log) 
+
+
+# Obtain the test error
+rf_test_acc <- augment(rf_fit, test_df) %>% accuracy(label, .pred_class) %>%
+  dplyr::select(3) %>% round(digits = 3) 
+
+# Obtain the kap
+rf_test_kap <- augment(rf_fit, test_df) %>% kap(label, .pred_class) %>%
+  dplyr::select(3) %>% round(digits = 3)
+
+# Obtain the area under the curve
+rf_test_area <- augment(rf_fit, test_df) %>% roc_auc(truth = label,
+            .pred_0) %>%
+  dplyr::select(3) %>% round(digits = 3) 
+
+# ROC Curve - via autoplot
+rf_test_block_roc <- augment(rf_fit, test_df) %>% 
+  roc_curve(truth = label,
+            .pred_0) %>% 
+  autoplot() 
+
+# Extract sensitivity and specificity 
+rf_block_extract <- augment(rf_fit, test_df) %>% 
+  roc_curve(truth = label,
+            .pred_0) %>%
+  mutate(method = "Random Forest")
+
+
+# Extract Accuracy for fold and reformat into a tidy table 
+avg_rf_block <- rf_block %>% group_by(.metric) %>% dplyr::summarise(avg = round(mean(.estimate),3))
+rf_block2 <- rf_block %>% pivot_wider(id_cols = id, names_from = id, values_from = .estimate) %>% round(digits = 3) %>% mutate(Method = "Random Forest", "CV Type" = "Block")
+rf_block2 <- cbind(rf_block2, avg_rf_block[,2], rf_test_acc)
+colnames(rf_block2) <- c("Fold 1", "Fold 2", "Fold 3", "Fold 4" , "Fold 5", " Fold 6", "Fold 7", "Fold 8", "Fold 9" , "Fold 10", "Method", "CV Type", "Fold Avg.", "Test Accuracy") 
+
+# Final Table
+rf_block2 <- rf_block2 %>% dplyr::select(c(11:12, 14, 13, 1:10))
+
+
+# Plot Variable Importance
+
+library(vip)
+
+rplot1 <- rand_forest(trees = 160, mtry = 3, min_n = 11) %>%
+  set_engine("ranger", importance = "permutation") %>%
+  set_mode("classification") %>% 
+  # dplyr::select(-c("block")) %>%
+  fit(label ~ .,
+    data = test_df %>% dplyr::select(-block)
+  ) %>%
+  vip(geom = "col", 
+      aesthetics = list(fill = "lightblue", color = "black")) +
+  labs(title = "RF Permutation Importance (Block)") +
+   theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+4A - Evaluate mislabeled points (BLOCK)
+
+```{r}
+# Mislabeled points
+block_mis <- augment(rf_fit, test_df) %>%
+  mutate(mislabeled = ifelse(label != .pred_class, TRUE, FALSE)) 
+block_mis2 <- cbind(m_test[,1:2], block_mis)
+
+# Plot the mislabeled points based on original image location 
+h1 <- block_mis2 %>% 
+  filter(block == 6) %>%
+  ggplot(aes(x=x, y = y, color = mislabeled)) +
+  geom_point() +
+  ylim(c(0,400)) +
+  ggtitle("Block 6 Mislabeled Points") +
+  theme(plot.title = element_text(hjust = 0.5))
+h2 <- block_mis2 %>% 
+  filter(block == 11) %>%
+  ggplot(aes(x=x, y = y, color = mislabeled)) +
+  geom_point() +
+   ylim(c(0,400)) +
+  ggtitle("Block 11 Mislabeled Points")+
+  theme(plot.title = element_text(hjust = 0.5))
+ggarrange(h1, h2, common.legend = TRUE, legend = "bottom")
+
+# Evaluate density plots for mislabeled points
+p1 <- ggplot(data = block_mis2, aes(x = ndai)) + geom_density(aes(fill = mislabeled), alpha = 0.5)
+p2 <- ggplot(data = block_mis2, aes(x = sd)) + geom_density(aes(fill = mislabeled), alpha = 0.5)
+p3 <- ggplot(data = block_mis2, aes(x = corr)) + geom_density(aes(fill = mislabeled), alpha = 0.5)
+p4 <- ggplot(data = block_mis2, aes(x = ra_df)) + geom_density(aes(fill = mislabeled), alpha = 0.5)
+p5 <- ggplot(data = block_mis2, aes(x = ra_cf)) + geom_density(aes(fill = mislabeled), alpha = 0.5)
+p6 <- ggplot(data = block_mis2, aes(x = ra_bf)) + geom_density(aes(fill = mislabeled), alpha = 0.5)
+p7 <- ggplot(data = block_mis2, aes(x = ra_af)) + geom_density(aes(fill = mislabeled), alpha = 0.5)
+p8 <- ggplot(data = block_mis2, aes(x = ra_an)) + geom_density(aes(fill = mislabeled), alpha = 0.5)
+ggarrange(p1, p2, p3, p4, p5, p6, p7, p8, nrow = 3, ncol = 3, common.legend = TRUE, legend ="bottom") %>%
+  annotate_figure(top = "Block Mislabeled Points Feature Density Comparison")
+
+# Calculate the mean
+block_mis2 %>%
+  group_by(mislabeled, label) %>%
+  dplyr::summarise(n = n(),
+                   ndai = mean(ndai),
+                   sd = mean(sd),
+                   corr = mean(corr),
+                   ra_df = mean(ra_df),
+                   ra_cf = mean(ra_cf),
+                   ra_bf = mean(ra_bf),
+                   ra_af = mean(ra_af),
+                   ra_an = mean(ra_an))
+```
+
+4B - RANDOM FORESTS (CLUSTER)
+
+```{r}
+tree_loop <- c( 30, 40)
+
+mean_vector <- c()
+
+set.seed(127)
+
+rf_list <- list(NA)
+
+for(i in seq_along(tree_loop)) {
+
+# Filter data frame to only contain predictors and response
+m_log <- m_train_val2 %>%
+  dplyr::select(c(3:11, "cluster")) %>%
+  mutate(label = as.factor(ifelse(label == -1, 0, 1))) 
+
+doParallel::registerDoParallel() 
+
+class_test <- rand_forest(trees = i, mtry = 3, min_n = 11) %>% 
+  set_engine("ranger", num.threads = 4) %>% 
+  set_mode("classification") 
+
+recip_test <- recipe(label ~ ., data = m_log)
+
+# rf_list[i] <- recip_test
+
+rf_block <- CVmaster(fold_type = "cluster", class_test, m_log, 10, recip_test) 
+
+mean_vector[i] <- mean(rf_block$.estimate)
+
+}
+
+
+
+set.seed(127)
+
+# Filter data frame to only contain predictors and response
+m_log <- m_train_val2 %>%
+  mutate(ndai = ndai^2) %>%
+  dplyr::select(c(3:11, "cluster")) %>%
+  mutate(label = as.factor(ifelse(label == -1, 0, 1))) 
+
+doParallel::registerDoParallel() 
+
+class_test <- rand_forest(trees = 40, mtry = 3, min_n = 11) %>% 
+  set_engine("ranger", num.threads = 4) %>% 
+  set_mode("classification") 
+
+recip_test <- recipe(label ~ ., data = m_log)
+
+rf_cluster <- CVmaster(fold_type = "cluster", class_test, m_log, 10, recip_test) 
+
+rf_clust <- rf_block
+mean(rf_block$.estimate)
+
+
+#### Now run model on the test data and construct an ROC curve
+
+# Modify Test set to only include the response and the predictor variables 
+test_df <- m_test2 %>%
+  mutate(label = as.factor(ifelse(label == -1, 0, 1))) %>%
+  dplyr::select(c(3:11, "cluster"))
+
+# Now use our logistic model from CV to evaluate performance on the test set
+rf_wflow <- workflow() %>%
+  add_recipe(recip_test) %>%
+  add_model(class_test)  
+  
+rf_fit <- rf_wflow %>%
+  fit(data = m_log) 
+
+# Obtain the test error
+rf_test_acc <- augment(rf_fit, test_df) %>% accuracy(label, .pred_class) %>%
+  dplyr::select(3) %>% round(digits = 3)
+
+# Obtain the kap
+rf_test_kap2 <- augment(rf_fit, test_df) %>% kap(label, .pred_class) %>%
+  dplyr::select(3) %>% round(digits = 3)
+
+# Obtain the area under the curve
+rf_test_area2 <- augment(rf_fit, test_df) %>% roc_auc(truth = label,
+            .pred_0) %>%
+  dplyr::select(3) %>% round(digits = 3) 
+
+# ROC Curve - via autoplot
+rf_test_clust_roc <- augment(rf_fit, test_df) %>% 
+  roc_curve(truth = label,
+            .pred_0) %>% 
+  autoplot() 
+
+# Extract sensitivity and specificity 
+rf_clust_extract <- augment(rf_fit, test_df) %>% 
+  roc_curve(truth = label,
+            .pred_0) %>%
+  mutate(method = "Random Forest")
+
+
+# Extract Accuracy for fold and reformat into a tidy table 
+avg_rf_clust <- rf_clust %>% group_by(.metric) %>% dplyr::summarise(avg = round(mean(.estimate),3))
+rf_clust2 <- rf_clust %>% pivot_wider(id_cols = id, names_from = id, values_from = .estimate) %>% round(digits = 3) %>% mutate(Method = "Random Forest", "CV Type" = "Clust")
+rf_clust2 <- cbind(rf_clust2, avg_rf_clust[,2], rf_test_acc)
+colnames(rf_clust2) <- c("Fold 1", "Fold 2", "Fold 3", "Fold 4" , "Fold 5", " Fold 6", "Fold 7", "Fold 8", "Fold 9" , "Fold 10", "Method", "CV Type", "Fold Avg.", "Test Accuracy") 
+
+# Final Table
+rf_clust2 <- rf_clust2 %>% dplyr::select(c(11:12, 14, 13, 1:10))
+
+
+rplot2 <- rand_forest(trees = 40, mtry = 3, min_n = 11) %>%
+  set_engine("ranger", importance = "permutation") %>%
+  set_mode("classification") %>%
+  fit(label ~ .,
+    data = test_df %>% dplyr::select(-cluster)
+  ) %>%
+  vip(geom = "col", 
+      aesthetics = list(fill = "blue", color = "black")) +
+  labs(title = "RF Permutation Importance (Cluster)") +
+   theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+4A - Evaluate mislabeled points (CLUSTER)
+
+Take a look at mislabeled points for the cluster random forest
+
+```{r}
+# Mislabeled points
+block_mis <- augment(rf_fit, test_df) %>%
+  mutate(mislabeled = ifelse(label != .pred_class, TRUE, FALSE)) 
+block_mis2 <- cbind(m_test2[,1:2], block_mis)
+
+# Plot the mislabeled points based on original image location 
+h1 <- block_mis2 %>% 
+  filter(cluster == 3) %>%
+  ggplot(aes(x=x, y = y, color = mislabeled)) +
+  geom_point() +
+  ylim(c(0,400)) +
+  xlim(c(0,400)) +
+  ggtitle("Cluster 3 Mislabeled Points") +
+  theme(plot.title = element_text(hjust = 0.5))
+h2 <- block_mis2 %>% 
+  filter(cluster == 9) %>% 
+  ggplot(aes(x=x, y = y, color = mislabeled)) +
+  geom_point() +
+   ylim(c(0,400)) +
+   xlim(c(0,400)) +
+  ggtitle("Cluster 9  Mislabeled Points")+
+  theme(plot.title = element_text(hjust = 0.5))
+ggarrange(h1, h2, common.legend = TRUE, legend = "bottom")
+
+# Evaluate density plots for mislabeled points
+p1 <- ggplot(data = block_mis2, aes(x = ndai)) + geom_density(aes(fill = mislabeled), alpha = 0.5)
+p2 <- ggplot(data = block_mis2, aes(x = sd)) + geom_density(aes(fill = mislabeled), alpha = 0.5)
+p3 <- ggplot(data = block_mis2, aes(x = corr)) + geom_density(aes(fill = mislabeled), alpha = 0.5)
+p4 <- ggplot(data = block_mis2, aes(x = ra_df)) + geom_density(aes(fill = mislabeled), alpha = 0.5)
+p5 <- ggplot(data = block_mis2, aes(x = ra_cf)) + geom_density(aes(fill = mislabeled), alpha = 0.5)
+p6 <- ggplot(data = block_mis2, aes(x = ra_bf)) + geom_density(aes(fill = mislabeled), alpha = 0.5)
+p7 <- ggplot(data = block_mis2, aes(x = ra_af)) + geom_density(aes(fill = mislabeled), alpha = 0.5)
+p8 <- ggplot(data = block_mis2, aes(x = ra_an)) + geom_density(aes(fill = mislabeled), alpha = 0.5)
+ggarrange(p1, p2, p3, p4, p5, p6, p7, p8, nrow = 3, ncol = 3, common.legend = TRUE, legend ="bottom") %>%
+  annotate_figure(top = "Block Mislabeled Points Feature Density Comparison")
+
+# Calculate the mean
+block_mis2 %>%
+  group_by(mislabeled, label) %>%
+  dplyr::summarise(n = n(),
+                   ndai = mean(ndai),
+                   sd = mean(sd),
+                   corr = mean(corr),
+                   ra_df = mean(ra_df),
+                   ra_cf = mean(ra_cf),
+                   ra_bf = mean(ra_bf),
+                   ra_af = mean(ra_af),
+                   ra_an = mean(ra_an))
+```
+
+Model Tables and Visualizations 
+
+Summary Table for model metrics: 
+
+```{r}
+save <- rbind(log_block2, log_cluster2, qda_block2, qda_cluster2, knn_block2, knn_cluster2, rf_block2, rf_clust2) 
+```
+
+Variable Importance Plot for Random Forests:
+
+```{r}
+grid.arrange(rplot1, rplot2, ncol = 2)
+```
+
+
+5 - COMBINE ROC Plots
+
+
+```{r}
+# Combine into one data frame 
+block_roc_df <- rbind(knn_block_extract, log_block_extract, qda_block_extract, rf_block_extract)
+cluster_roc_df <- rbind(knn_cluster_extract, log_cluster_extract, qda_cluster_extract, rf_clust_extract)
+
+md <- block_roc_df %>% filter(specificity > 0.93 & specificity < 0.97)
+
+# Plot the Block ROC Curves
+b1 <- block_roc_df %>%
+  ggplot(aes(x = 1-specificity, y = sensitivity, color = method)) +
+  geom_path() +
+  ggtitle("ROC Curves for Block Split") +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.title = element_blank()) +
+  labs(color = "Method") +
+  geom_vline(xintercept = 0.25, linetype = "dotted")
+
+# Plot the Cluster ROC Curves
+c1 <- cluster_roc_df %>%
+  ggplot(aes(x = 1-specificity, y = sensitivity, color = method)) +
+  geom_path() +
+  ggtitle("ROC Curves for Cluster Split") +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.title = element_blank()) +
+  labs(color = "Method") +
+  geom_vline(xintercept = 0.25, linetype = "dotted")
+
+ggarrange(b1, c1, common.legend = TRUE, legend ="bottom")
+```
+
+Extract the AOC calculations for each model: 
+
+```{r}
+v1 <- log_test_area %>% pull()
+v2 <- log_test_area2 %>% pull()
+v3 <- qda_test_area %>% pull()
+v4 <- qda_test_area2 %>% pull()
+v5 <- knn_test_area %>% pull()
+v6 <- knn_test_area2 %>% pull()
+v7 <- rf_test_area %>% pull()
+v8 <- rf_test_area2 %>% pull()
+
+AOC_df <- rbind(log_test_area, log_test_area2, qda_test_area, qda_test_area2, knn_test_area, knn_test_area2, rf_test_area, rf_test_area2)
+Method <- c("Log Reg", "Log Reg", "QDA", "QDA", "KNN", "KNN", "RF", "RF")
+CV <- c("Block", "Cluster", "Block", "Cluster", "Block", "Cluster", "Block", "Cluster")
+AOC_print <- cbind(Method, CV, AOC_df)
+```
+
+
+Extact the Kappa calculations for each model
+
+```{r}
+Kap_df <- rbind(log_test_kap, log_test_kap2, qda_test_kap, qda_test_kap2, knn_test_kap, knn_test_kap2, rf_test_kap, rf_test_kap2)
+Method <- c("Log Reg", "Log Reg", "QDA", "QDA", "KNN", "KNN", "RF", "RF")
+CV <- c("Block", "Cluster", "Block", "Cluster", "Block", "Cluster", "Block", "Cluster")
+Kap_print <- cbind(Method, CV, Kap_df)
+```
+
+
+
+Extract a Tree
+
+Code Reference: https://shiring.github.io/machine_learning/2017/03/16/rf_plot_ggraph 
+
+```{r}
+library(dplyr)
+library(ggraph)
+library(igraph)
+
+tree_func <- function(final_model, 
+                      tree_num) {
+  
+  # get tree by index
+  tree <- randomForest::getTree(final_model, 
+                                k = tree_num, 
+                                labelVar = TRUE) %>%
+    tibble::rownames_to_column() %>%
+    # make leaf split points to NA, so the 0s won't get plotted
+    mutate(`split point` = ifelse(is.na(prediction), `split point`, NA))
+  
+  # prepare data frame for graph
+  graph_frame <- data.frame(from = rep(tree$rowname, 2),
+                            to = c(tree$`left daughter`, tree$`right daughter`))
+  
+  # convert to graph and delete the last node that we don't want to plot
+  graph <- graph_from_data_frame(graph_frame) %>%
+    igraph::delete_vertices("0")
+  
+  # set node labels
+  V(graph)$node_label <- gsub("_", " ", as.character(tree$`split var`))
+  V(graph)$leaf_label <- as.character(tree$prediction)
+  V(graph)$split <- as.character(round(tree$`split point`, digits = 2))
+  
+  # plot
+  plot <- ggraph(graph, 'dendrogram') + 
+    theme_bw() +
+    geom_edge_link() +
+    geom_node_point() +
+    geom_node_text(aes(label = node_label), na.rm = TRUE, repel = TRUE) +
+    geom_node_label(aes(label = split), vjust = 2.5, na.rm = TRUE, fill = "white") +
+    geom_node_label(aes(label = leaf_label, fill = leaf_label), na.rm = TRUE, 
+					repel = TRUE, colour = "white", fontface = "bold", show.legend = FALSE) +
+    theme(panel.grid.minor = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.background = element_blank(),
+          plot.background = element_rect(fill = "white"),
+          panel.border = element_blank(),
+          axis.line = element_blank(),
+          axis.text.x = element_blank(),
+          axis.text.y = element_blank(),
+          axis.ticks = element_blank(),
+          axis.title.x = element_blank(),
+          axis.title.y = element_blank(),
+          plot.title = element_text(size = 18))
+  
+  print(plot)
+}
+
+
+forest <- randomForest::randomForest(formula = label ~ ., data = m_log %>% dplyr::select(-block),
+                           mtry = 3,
+                           ntree = 160,
+                           maxnodes = 30)
+
+
+# tree_num <- which(model_rf$finalModel$forest$ndbigtree == min(model_rf$finalModel$forest$ndbigtree))
+
+tree_func(forest, 10)
+```
+
+4A -RANDOM FORESTS - (BLOCK) - Try with ndai squared 
+
+
+```{r}
+
+set.seed(127)
+
+# Filter data frame to only contain predictors and response
+m_log <- m_train_val %>%
+  mutate(ndai2 = ndai^2) %>%
+  dplyr::select(c(3:11,"ndai2", "block")) %>%
+  mutate(label = as.factor(ifelse(label == -1, 0, 1))) 
+
+doParallel::registerDoParallel() 
+
+class_test <- rand_forest(trees = 160, mtry = 4, min_n = 11) %>% 
+  set_engine("ranger", num.threads = 4) %>% 
+  set_mode("classification") 
+
+recip_test <- recipe(label ~ ., data = m_log)
+
+rf_block <- CVmaster(fold_type = "block", class_test, m_log, 10, recip_test) 
+
+mean(rf_block$.estimate)
+
+
+#### Now run model on the test data and construct an ROC curve
+
+# Modify Test set to only include the response and the predictor variables 
+test_df <- m_test %>%
+  mutate(ndai2 = ndai^2) %>%
+  mutate(label = as.factor(ifelse(label == -1, 0, 1))) %>%
+  dplyr::select(c(3:11,"ndai2", "block"))
+
+# Now use our logistic model from CV to evaluate performance on the test set
+rf_wflow <- workflow() %>%
+  add_recipe(recip_test) %>%
+  add_model(class_test)  
+  
+rf_fit <- rf_wflow %>%
+  fit(data = m_log) 
+
+
+# Obtain the test error
+rf_test_acc <- augment(rf_fit, test_df) %>% accuracy(label, .pred_class) %>%
+  dplyr::select(3) %>% round(digits = 3)
+
+# Obtain the area under the curve
+rf_test_area <- augment(rf_fit, test_df) %>% roc_auc(truth = label,
+            .pred_0) %>%
+  dplyr::select(3) %>% round(digits = 3) 
+
+# ROC Curve - via autoplot
+rf_test_block_roc <- augment(rf_fit, test_df) %>% 
+  roc_curve(truth = label,
+            .pred_0) %>% 
+  autoplot() 
+
+# Extract sensitivity and specificity 
+rf_block_extract <- augment(rf_fit, test_df) %>% 
+  roc_curve(truth = label,
+            .pred_0) %>%
+  mutate(method = "Random Forest")
+
+
+# Extract Accuracy for fold and reformat into a tidy table 
+avg_rf_block <- rf_block %>% group_by(.metric) %>% dplyr::summarise(avg = round(mean(.estimate),3))
+rf_block2 <- rf_block %>% pivot_wider(id_cols = id, names_from = id, values_from = .estimate) %>% round(digits = 3) %>% mutate(Method = "Random Forest", "CV Type" = "Block")
+rf_block2 <- cbind(rf_block2, avg_rf_block[,2], rf_test_acc)
+colnames(rf_block2) <- c("Fold 1", "Fold 2", "Fold 3", "Fold 4" , "Fold 5", " Fold 6", "Fold 7", "Fold 8", "Fold 9" , "Fold 10", "Method", "CV Type", "Fold Avg.", "Test Accuracy") 
+
+# Final Table
+rf_block2 <- rf_block2 %>% dplyr::select(c(11:12, 14, 13, 1:10))
+
+
+# Plot Variable Importance
+
+library(vip)
+
+rplot1 <- rand_forest(trees = 160, mtry = 3, min_n = 11) %>%
+  set_engine("ranger", importance = "permutation") %>%
+  set_mode("classification") %>% 
+  # dplyr::select(-c("block")) %>%
+  fit(label ~ .,
+    data = test_df %>% dplyr::select(-block)
+  ) %>%
+  vip(geom = "col", 
+      aesthetics = list(fill = "lightblue", color = "black")) +
+  labs(title = "RF Permutation Importance (Block)") +
+   theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+4A - RANDOM FORESTS - (CLUSTER) - Try with ndai squared 
+
+```{r}
+tree_loop <- c( 30, 40)
+
+mean_vector <- c()
+
+set.seed(127)
+
+rf_list <- list(NA)
+
+for(i in seq_along(tree_loop)) {
+
+# Filter data frame to only contain predictors and response
+m_log <- m_train_val2 %>%
+  mutate(ndai2 = ndai^2) %>%
+  dplyr::select(c("label","ndai", "ra_af", "ra_an", "cluster", "ndai2")) %>%
+  mutate(label = as.factor(ifelse(label == -1, 0, 1))) 
+
+doParallel::registerDoParallel() 
+
+class_test <- rand_forest(trees = i, mtry = 3, min_n = 11) %>% 
+  set_engine("ranger", num.threads = 4) %>% 
+  set_mode("classification") 
+
+recip_test <- recipe(label ~ ., data = m_log)
+
+# rf_list[i] <- recip_test
+
+rf_block <- CVmaster(fold_type = "cluster", class_test, m_log, 10, recip_test) 
+
+mean_vector[i] <- mean(rf_block$.estimate)
+
+}
+
+
+
+set.seed(127)
+
+# Filter data frame to only contain predictors and response
+m_log <- m_train_val2 %>%
+  mutate(ndai2 = ndai^2) %>%
+  dplyr::select(c("label","ndai", "ra_af", "ra_an", "cluster", "ndai2")) %>%
+  mutate(label = as.factor(ifelse(label == -1, 0, 1))) 
+
+doParallel::registerDoParallel() 
+
+class_test <- rand_forest(trees = 40, mtry = 3, min_n = 11) %>% 
+  set_engine("ranger", num.threads = 4) %>% 
+  set_mode("classification") 
+
+recip_test <- recipe(label ~ ., data = m_log)
+
+rf_cluster <- CVmaster(fold_type = "cluster", class_test, m_log, 10, recip_test) 
+
+rf_clust <- rf_block
+mean(rf_block$.estimate)
+
+
+#### Now run model on the test data and construct an ROC curve
+
+# Modify Test set to only include the response and the predictor variables 
+test_df <- m_test2 %>%
+  mutate(ndai2 = ndai^2) %>%
+  mutate(label = as.factor(ifelse(label == -1, 0, 1))) %>%
+  dplyr::select(c(3:11, "cluster", "ndai2"))
+
+# Now use our logistic model from CV to evaluate performance on the test set
+rf_wflow <- workflow() %>%
+  add_recipe(recip_test) %>%
+  add_model(class_test)  
+  
+rf_fit <- rf_wflow %>%
+  fit(data = m_log) 
+
+# Obtain the test error
+rf_test_acc <- augment(rf_fit, test_df) %>% accuracy(label, .pred_class) %>%
+  dplyr::select(3) %>% round(digits = 3)
+
+# Obtain the area under the curve
+rf_test_area2 <- augment(rf_fit, test_df) %>% roc_auc(truth = label,
+            .pred_0) %>%
+  dplyr::select(3) %>% round(digits = 3) 
+
+# ROC Curve - via autoplot
+rf_test_clust_roc <- augment(rf_fit, test_df) %>% 
+  roc_curve(truth = label,
+            .pred_0) %>% 
+  autoplot() 
+
+# Extract sensitivity and specificity 
+rf_clust_extract <- augment(rf_fit, test_df) %>% 
+  roc_curve(truth = label,
+            .pred_0) %>%
+  mutate(method = "Random Forest")
+
+
+# Extract Accuracy for fold and reformat into a tidy table 
+avg_rf_clust <- rf_clust %>% group_by(.metric) %>% dplyr::summarise(avg = round(mean(.estimate),3))
+rf_clust2 <- rf_clust %>% pivot_wider(id_cols = id, names_from = id, values_from = .estimate) %>% round(digits = 3) %>% mutate(Method = "Random Forest", "CV Type" = "Clust")
+rf_clust2 <- cbind(rf_clust2, avg_rf_clust[,2], rf_test_acc)
+colnames(rf_clust2) <- c("Fold 1", "Fold 2", "Fold 3", "Fold 4" , "Fold 5", " Fold 6", "Fold 7", "Fold 8", "Fold 9" , "Fold 10", "Method", "CV Type", "Fold Avg.", "Test Accuracy") 
+
+# Final Table
+rf_clust2 <- rf_clust2 %>% dplyr::select(c(11:12, 14, 13, 1:10))
+```
+
+
+
+***
+
