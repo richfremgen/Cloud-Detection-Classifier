@@ -21,8 +21,7 @@ Now that we have done EDA with the data, we now prepare to train our model.
 Suggest at least two non-trivial different ways of splitting the data which takes into account that the data is not i.i.d.
 * (Baseline) Report the accuracy of a trivial classifier that sets all labels to -1 (cloud-free) on the validation set and on the test set. In what scenarios will such a
 classier have high average accuracy? Hint: Such a step provides a baseline to ensure that the classification problems at hand are not trivial.
-* (First order importance) Assuming the expert labels as the truth, and without using fancy classification methods, suggest three of the \best" features, using quantitative
-and visual justi cation. 
+* (First order importance) Assuming the expert labels as the truth, and without using fancy classification methods, suggest three of the best" features, using quantitative and visual justification. 
 * Write a generic cross-validation (CV) function CVmaster in R that takes a generic classifier, training features, training labels, number of folds K and a loss function (at
 least classification accuracy should be there) as inputs and outputs the K-fold CV loss on the training set.
 
