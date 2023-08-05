@@ -4,7 +4,7 @@ output:
   html_document: default
 ---
 
-# README for STA-521 Project 2:
+# README for Cloud Detection Project:
 
 ## 1 - Contents of this folder:
 
