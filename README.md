@@ -8,6 +8,7 @@ dataset has *expert labels* that can be used to train your models. When you eval
 large number of images that won't have these *exper labels*. 
 
 ## 1 Data Collection and Exploration (30 pts)
+
 (a) Write a half-page summary of the paper, including at least the purpose of the study, the data, the collection method, its conclusions and potential impact.
 (b) Summarize the data, i.e., % of pixels for the di erent classes. Plot well-labeled beautiful maps using x; y coordinates the expert labels with color of the region based on the expert labels. Do you observe some trend/pattern? Is an i.i.d. assumption for the samples justi ed for this dataset?
 (c) Perform a visual and quantitative EDA of the dataset, e.g., summarizing (i) pairwise relationship between the features themselves and (ii) the relationship between the expert labels with the individual features. Do you notice di erences between the
